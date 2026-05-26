@@ -41,3 +41,12 @@ nav:
   - 创作类 AI Agent 开源项目调研: research-creative-agents.md
 - 设计决策:
   - 01 意图澄清机制: decisions/01-intent-clarification.md
+  - 02 迭代锁定机制: decisions/02-iteration-lock-mechanism.md
+  - 03 参数推导体系: decisions/03-parameter-derivation.md
+  - 04 评估机制: decisions/04-evaluation-mechanism.md
+  - 05 失败修复策略: decisions/05-failure-recovery.md
+  - 06 持续改进: decisions/06-continuous-improvement.md
+- Harness:
+  - 风格规范: style-spec.md
+- 调研补充:
+  - 一致性漂移解法: research-consistency.md
