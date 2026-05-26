@@ -1,0 +1,41 @@
+site_name: Honeys 动画设计
+site_url: https://xzz-amu.github.io/honeys-animation/
+site_description: Honeys 动画设计项目文档
+theme:
+  name: material
+  language: zh
+  palette:
+  - scheme: default
+    primary: indigo
+    accent: indigo
+    toggle:
+      icon: material/brightness-7
+      name: 切换到深色模式
+  - scheme: slate
+    primary: indigo
+    accent: indigo
+    toggle:
+      icon: material/brightness-4
+      name: 切换到浅色模式
+  features:
+  - navigation.instant
+  - navigation.tabs
+  - navigation.top
+  - toc.follow
+  - search.suggest
+markdown_extensions:
+- admonition
+- pymdownx.details
+- pymdownx.superfences
+- pymdownx.highlight:
+    anchor_linenums: true
+- pymdownx.inlinehilite
+- toc:
+    permalink: true
+nav:
+- 首页: index.md
+- 参考资料:
+  - Claude Code Harness 拆解：5 阶段参照: reference-claude-code-harness.md
+  - ComfyUI Harness 拆解：创作类 Agent 参照: reference-creative-agent-harness.md
+- 调研:
+  - 创作类 AI Agent 开源项目调研: research-creative-agents.md
