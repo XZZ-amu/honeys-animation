@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>风铃</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #FFFFF8;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    min-height: 100vh;
+    overflow: hidden;
+  }
+  canvas {
+    display: block;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// ─── Wind system ───────────────────────────────────────────────────────────
+const wind = {
+  phase: 0,          // current wind phase: 0=still, 1=gust, 2=fallback
+  timer: 0,
+  duration: 0,
+  strength: 0,       // current target angle offset (degrees)
+  current: 0,        // smoothed current angle
+  nextPhase() {
+    const r = Math.random();
+    if (r < 0.45) {
+      // still with micro-sway
+      this.phase = 0;
+      this.duration = 1000 + Math.random() * 1500;
+      this.strength = (Math.random() - 0.5) * 4; // ±2 degrees micro
+    } else if (r < 0.85) {
+      // light gust
+      this.phase = 1;
+      this.duration = 1000 + Math.random() * 1200;
+      this.strength = (Math.random() > 0.5 ? 1 : -1) * (5 + Math.random() * 5);
+    } else {
+      // stronger gust
+      this.phase = 1;
+      this.duration = 800 + Math.random() * 600;
+      this.strength = (Math.random() > 0.5 ? 1 : -1) * (10 + Math.random() * 5);
+    }
+    this.timer = 0;
+  },
+  update(dt) {
+    this.timer += dt;
+    if (this.timer >= this.duration) this.nextPhase();
+    // smooth current toward strength
+    const lerp = 1 - Math.pow(0.002, dt / 1000);
+    this.current += (this.strength - this.current) * lerp;
+  }
+};
+wind.nextPhase();
+
+// ─── Floating decorations ──────────────────────────────────────────────────
+const floaters = [];
+for (let i = 0; i < 14; i++) {
+  floaters.push({
+    x: Math.random() * 0.95 + 0.025,
+    y: Math.random(),
+    r: 2 + Math.random() * 4,
+    type: Math.random() < 0.6 ? 'circle' : 'star4',
+    color: Math.random() < 0.5 ? '#E0D0F0' : '#C8E0F0',
+    speedX: (Math.random() - 0.5) * 0.00006,
+    speedY: (Math.random() - 0.5) * 0.00004,
+    phase: Math.random() * Math.PI * 2,
+    amp: 0.008 + Math.random() * 0.012,
+    freq: 0.3 + Math.random() * 0.5,
+  });
+}
+
+// ─── Strand definitions ───────────────────────────────────────────────────
+// Each strand: array of items from top to bottom
+// Item types: 'bead', 'star', 'shell', 'flower', 'snail', 'moon', 'cloud'
+
+const STRAND_DEFS = [
+  // strand 0 — leftmost
+  { xOff: -90, phase: 0.0, speedMult: 0.9,
+    items: ['bead','moon','bead','cloud','bead'] },
+  // strand 1
+  { xOff: -44, phase: 0.7, speedMult: 1.05,
+    items: ['bead','star','bead','shell','bead','flower'] },
+  // strand 2 — center
+  { xOff: 0, phase: 1.4, speedMult: 1.0,
+    items: ['bead','flower','bead','star','bead','snail','bead'] },
+  // strand 3
+  { xOff: 44, phase: 2.1, speedMult: 0.95,
+    items: ['bead','shell','bead','moon','bead'] },
+  // strand 4 — rightmost
+  { xOff: 90, phase: 2.8, speedMult: 1.1,
+    items: ['bead','star','bead','cloud','bead','shell'] },
+];
+
+const ITEM_GAP = 34; // px between item centers
+const ITEM_START_Y = 0; // relative to umbrella bottom
+
+// ─── Segment physics (per strand) ─────────────────────────────────────────
+// Each strand has N segments (one per item).
+// Each segment has angle relative to parent.
+class StrandPhysics {
+  constructor(n, phaseSeed, speedMult) {
+    this.n = n;
+    this.angles = new Array(n).fill(0);
+    this.velocities = new Array(n).fill(0);
+    this.phase = phaseSeed;
+    this.speedMult = speedMult;
+    // individual micro-noise phases
+    this.noisePhases = Array.from({length: n}, () => Math.random() * Math.PI * 2);
+    this.noiseFreqs = Array.from({length: n}, () => 0.4 + Math.random() * 0.6);
+  }
+  update(dt, windAngle, t) {
+    const dtS = dt / 1000;
+    for (let i = 0; i < this.n; i++) {
+      // propagation factor: top moves less, bottom more
+      const depth = (i + 1) / this.n;
+      const targetAngle = windAngle * depth * this.speedMult
+        + Math.sin(t * this.noiseFreqs[i] + this.noisePhases[i]) * 1.2 * depth;
+
+      // spring-damper
+      const k = 6 - depth * 2;   // stiffer at top
+      const damp = 3.5;
+      const diff = targetAngle - this.angles[i];
+      this.velocities[i] += diff * k * dtS;
+      this.velocities[i] *= (1 - damp * dtS);
+      this.angles[i] += this.velocities[i] * dtS;
+      // clamp
+      const maxA = 15 * depth;
+      this.angles[i] = Math.max(-maxA, Math.min(maxA, this.angles[i]));
+    }
+  }
+  getPositions(anchorX, anchorY) {
+    const pts = [{x: anchorX, y: anchorY}];
+    let cx = anchorX, cy = anchorY, cumAngle = 0;
+    for (let i = 0; i < this.n; i++) {
+      cumAngle += this.angles[i];
+      const rad = cumAngle * Math.PI / 180;
+      cx += Math.sin(rad) * ITEM_GAP;
+      cy += Math.cos(rad) * ITEM_GAP;
+      pts.push({x: cx, y: cy});
+    }
+    return pts;
+  }
+}
+
+const strandPhysics = STRAND_DEFS.map(s =>
+  new StrandPhysics(s.items.length, s.phase, s.speedMult)
+);
+
+// umbrella sway
+const umbrellaSwayPhase = Math.random() * Math.PI * 2;
+
+// ─── Draw helpers ─────────────────────────────────────────────────────────
+function drawBead(x, y, r, color) {
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.strokeStyle = '#ddd';
+  ctx.lineWidth = 0.7;
+  ctx.stroke();
+}
+
+function drawStar(x, y, size, color) {
+  const n = 5, outer = size, inner = size * 0.42;
+  ctx.beginPath();
+  for (let i = 0; i < n * 2; i++) {
+    const r = i % 2 === 0 ? outer : inner;
+    const a = (i * Math.PI / n) - Math.PI / 2;
+    i === 0 ? ctx.moveTo(x + r * Math.cos(a), y + r * Math.sin(a))
+            : ctx.lineTo(x + r * Math.cos(a), y + r * Math.sin(a));
+  }
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.strokeStyle = '#e8d080';
+  ctx.lineWidth = 0.8;
+  ctx.stroke();
+}
+
+function drawShell(x, y, size, color) {
+  // fan-like shell: arc with ribs
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.arc(0, 0, size, Math.PI * 0.9, Math.PI * 2.1);
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.strokeStyle = '#a0c0d0';
+  ctx.lineWidth = 0.8;
+  ctx.stroke();
+  // ribs
+  ctx.strokeStyle = 'rgba(160,200,220,0.5)';
+  ctx.lineWidth = 0.6;
+  for (let i = 0; i < 4; i++) {
+    const a = Math.PI * 0.9 + (Math.PI * 1.2 / 4) * (i + 0.5);
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(Math.cos(a) * size * 0.9, Math.sin(a) * size * 0.9);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawFlower(x, y, size, color) {
+  const petals = 5;
+  ctx.save();
+  ctx.translate(x, y);
+  for (let i = 0; i < petals; i++) {
+    const a = (i / petals) * Math.PI * 2;
+    const px = Math.cos(a) * size * 0.55;
+    const py = Math.sin(a) * size * 0.55;
+    ctx.beginPath();
+    ctx.ellipse(px, py, size * 0.42, size * 0.28, a, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.strokeStyle = '#f0a0b8';
+    ctx.lineWidth = 0.7;
+    ctx.stroke();
+  }
+  // center
+  ctx.beginPath();
+  ctx.arc(0, 0, size * 0.22, 0, Math.PI * 2);
+  ctx.fillStyle = '#FFF0B0';
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawMoon(x, y, size, color) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.beginPath();
+  ctx.arc(0, 0, size, Math.PI * 0.3, Math.PI * 1.7);
+  ctx.arc(-size * 0.3, 0, size * 0.75, Math.PI * 1.7, Math.PI * 0.3, true);
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.strokeStyle = '#e8d060';
+  ctx.lineWidth = 0.8;
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawCloud(x, y, size, color) {
+  ctx.save();
+  ctx.translate(x, y);
+  const s = size * 0.6;
+  ctx.beginPath();
+  ctx.arc(0, 0, s, 0, Math.PI * 2);
+  ctx.arc(s * 1.1, s * 0.2, s * 0.7, 0, Math.PI * 2);
+  ctx.arc(-s * 1.0, s * 0.2, s * 0.65, 0, Math.PI * 2);
+  ctx.arc(s * 0.45, -s * 0.6, s * 0.6, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.strokeStyle = '#b0c8d8';
+  ctx.lineWidth = 0.7;
+  // outline only
+  ctx.beginPath();
+  ctx.moveTo(-s * 1.6, s * 0.7);
+  ctx.arc(-s, s * 0.2, s * 0.65, Math.PI * 0.6, Math.PI * 1.6);
+  ctx.arc(0, 0, s, Math.PI * 1.1, Math.PI * 1.85, true);
+  ctx.arc(s * 0.45, -s * 0.6, s * 0.6, Math.PI * 1.3, Math.PI * 0.0);
+  ctx.arc(s * 1.1, s * 0.2, s * 0.7, Math.PI * 1.7, Math.PI * 0.45);
+  ctx.arc(s * 0.6, s * 0.8, s * 0.35, 0, Math.PI);
+  ctx.lineTo(-s * 1.6, s * 0.7);
+  ctx.closePath();
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawSnail(x, y, size, color) {
+  // simplified snail: spiral shell + body
+  ctx.save();
+  ctx.translate(x, y);
+  // shell: a filled circle with spiral suggestion
+  ctx.beginPath();
+  ctx.arc(size * 0.1, -size * 0.1, size * 0.65, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.strokeStyle = '#c0a0c8';
+  ctx.lineWidth = 0.8;
+  ctx.stroke();
+  // spiral line
+  ctx.beginPath();
+  ctx.arc(size * 0.1, -size * 0.1, size * 0.3, 0, Math.PI * 1.5);
+  ctx.strokeStyle = 'rgba(180,140,200,0.5)';
+  ctx.lineWidth = 0.7;
+  ctx.stroke();
+  // body
+  ctx.beginPath();
+  ctx.ellipse(-size * 0.5, size * 0.35, size * 0.45, size * 0.22, Math.PI * 0.1, 0, Math.PI * 2);
+  ctx.fillStyle = '#D4B8C0';
+  ctx.fill();
+  ctx.strokeStyle = '#c0a0a8';
+  ctx.lineWidth = 0.7;
+  ctx.stroke();
+  // antenna
+  ctx.strokeStyle = '#c8a8b0';
+  ctx.lineWidth = 0.8;
+  ctx.beginPath();
+  ctx.moveTo(-size * 0.75, size * 0.2);
+  ctx.lineTo(-size * 0.9, -size * 0.05);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(-size * 0.75, size * 0.2);
+  ctx.lineTo(-size * 1.0, size * 0.05);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawItem(type, x, y) {
+  const SIZE = 10;
+  switch(type) {
+    case 'bead':
+      const bc = Math.random() < 0.5 ? '#F8C8D8' : '#C8D8F0';
+      drawBead(x, y, 4, bc);
+      break;
+    case 'star':   drawStar(x, y, SIZE, '#FFE4A0'); break;
+    case 'shell':  drawShell(x, y, SIZE, '#B8D8E8'); break;
+    case 'flower': drawFlower(x, y, SIZE, '#FFD0E0'); break;
+    case 'moon':   drawMoon(x, y, SIZE, '#FFF0B0'); break;
+    case 'cloud':  drawCloud(x, y, SIZE, '#D8E8F0'); break;
+    case 'snail':  drawSnail(x, y, SIZE, '#D8C0E8'); break;
+  }
+}
+
+// bead colors fixed per strand (so they don't flicker)
+const beadColors = STRAND_DEFS.map(s =>
+  s.items.map(item => item === 'bead'
+    ? (Math.random() < 0.5 ? '#F8C8D8' : '#C8D8F0')
+    : null)
+);
+
+function drawItemFixed(type, x, y, color) {
+  const SIZE = 10;
+  switch(type) {
+    case 'bead':   drawBead(x, y, 4, color || '#F8C8D8'); break;
+    case 'star':   drawStar(x, y, SIZE, '#FFE4A0'); break;
+    case 'shell':  drawShell(x, y, SIZE, '#B8D8E8'); break;
+    case 'flower': drawFlower(x, y, SIZE, '#FFD0E0'); break;
+    case 'moon':   drawMoon(x, y, SIZE, '#FFF0B0'); break;
+    case 'cloud':  drawCloud(x, y, SIZE, '#D8E8F0'); break;
+    case 'snail':  drawSnail(x, y, SIZE, '#D8C0E8'); break;
+  }
+}
+
+// ─── Draw umbrella cap ────────────────────────────────────────────────────
+function drawUmbrella(cx, cy, angle) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(angle * Math.PI / 180);
+
+  const W = 110, H = 42;
+
+  // main dome
+  ctx.beginPath();
+  ctx.moveTo(-W, 0);
+  // top arc
+  ctx.bezierCurveTo(-W, -H * 2, W, -H * 2, W, 0);
+  // wavy bottom edge
+  const segments = 8;
+  const segW = (W * 2) / segments;
+  for (let i = 0; i < segments; i++) {
+    const x0 = -W + segW * i;
+    const x1 = x0 + segW;
+    const waveY = (i % 2 === 0) ? H * 0.35 : 0;
+    ctx.quadraticCurveTo(x0 + segW * 0.5, waveY, x1, 0);
+  }
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(180,220,240,0.6)';
+  ctx.fill();
+  ctx.strokeStyle = '#a0c4d8';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // subtle ribs
+  ctx.strokeStyle = 'rgba(160,200,220,0.35)';
+  ctx.lineWidth = 0.8;
+  const ribAngles = [-60, -30, 0, 30, 60];
+  for (const ra of ribAngles) {
+    const rad = (ra - 90) * Math.PI / 180;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    // map to dome edge
+    const ex = Math.cos(rad) * W * 0.95;
+    const ey = Math.sin(rad) * H * 0.95 * 2 - H * 2 * 0.5;
+    ctx.quadraticCurveTo(ex * 0.5, ey * 0.6, ex, ey < 0 ? ey : 0);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+// ─── Draw bow / ribbon at top ─────────────────────────────────────────────
+function drawBow(cx, cy) {
+  ctx.save();
+  ctx.translate(cx, cy);
+
+  // left loop
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.bezierCurveTo(-28, -18, -34, -10, -16, 0);
+  ctx.bezierCurveTo(-34, 8, -28, 16, 0, 0);
+  ctx.fillStyle = '#F8C0D0';
+  ctx.fill();
+  ctx.strokeStyle = '#e0a0b8';
+  ctx.lineWidth = 0.9;
+  ctx.stroke();
+
+  // right loop
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.bezierCurveTo(28, -18, 34, -10, 16, 0);
+  ctx.bezierCurveTo(34, 8, 28, 16, 0, 0);
+  ctx.fillStyle = '#F8C0D0';
+  ctx.fill();
+  ctx.strokeStyle = '#e0a0b8';
+  ctx.lineWidth = 0.9;
+  ctx.stroke();
+
+  // center knot
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 6, 5, 0, 0, Math.PI * 2);
+  ctx.fillStyle = '#F0A8C0';
+  ctx.fill();
+  ctx.strokeStyle = '#d890a8';
+  ctx.lineWidth = 0.9;
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+// ─── Draw pearl chain (bow → umbrella) ───────────────────────────────────
+function drawPearlChain(x1, y1, x2, y2) {
+  const n = 5;
+  for (let i = 0; i <= n; i++) {
+    const t = i / n;
+    const x = x1 + (x2 - x1) * t;
+    const y = y1 + (y2 - y1) * t;
+    if (i > 0 && i < n) {
+      drawBead(x, y, 3.5, i % 2 === 0 ? '#F8C8D8' : '#C8D8F0');
+    }
+  }
+  // line behind beads
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.strokeStyle = '#ccc';
+  ctx.lineWidth = 0.8;
+  ctx.stroke();
+}
+
+// ─── Draw floaters ────────────────────────────────────────────────────────
+function drawFloater(f, t) {
+  const w = canvas.width, h = canvas.height;
+  const x = (f.x + Math.sin(t * f.freq + f.phase) * f.amp) * w;
+  const y = (f.y + Math.cos(t * f.freq * 0.7 + f.phase) * f.amp * 0.8) * h;
+
+  ctx.save();
+  ctx.globalAlpha = 0.55;
+  if (f.type === 'circle') {
+    ctx.beginPath();
+    ctx.arc(x, y, f.r, 0, Math.PI * 2);
+    ctx.strokeStyle = f.color;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  } else {
+    // 4-pointed star (subtle)
+    const s = f.r;
+    ctx.beginPath();
+    for (let i = 0; i < 8; i++) {
+      const r = i % 2 === 0 ? s : s * 0.4;
+      const a = (i * Math.PI / 4) - Math.PI / 4;
+      i === 0 ? ctx.moveTo(x + r * Math.cos(a), y + r * Math.sin(a))
+              : ctx.lineTo(x + r * Math.cos(a), y + r * Math.sin(a));
+    }
+    ctx.closePath();
+    ctx.fillStyle = f.color;
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+// ─── Main loop ────────────────────────────────────────────────────────────
+let last = 0, t = 0;
+
+function frame(ts) {
+  const dt = Math.min(ts - last, 50);
+  last = ts;
+  t += dt / 1000;
+
+  wind.update(dt);
+
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  // layout anchors
+  const centerX = W / 2;
+  const bowY = 30;
+  const pearlTopY = bowY + 10;
+  const pearlBotY = bowY + 52;
+  const umbrellaY = pearlBotY + 2;
+
+  // umbrella sway (very small)
+  const umbAngle = wind.current * 0.12
+    + Math.sin(t * 0.4 + umbrellaSwayPhase) * 0.8;
+
+  // ── floaters (behind everything) ──
+  for (const f of floaters) {
+    // update position drift
+    f.x += f.speedX;
+    f.y += f.speedY;
+    if (f.x < -0.05) f.x = 1.05;
+    if (f.x > 1.05) f.x = -0.05;
+    if (f.y < -0.05) f.y = 1.05;
+    if (f.y > 1.05) f.y = -0.05;
+    drawFloater(f, t);
+  }
+
+  // ── pearl chain (line first, then beads) ──
+  // line
+  ctx.beginPath();
+  ctx.moveTo(centerX, pearlTopY);
+  ctx.lineTo(centerX, pearlBotY);
+  ctx.strokeStyle = '#ccc';
+  ctx.lineWidth = 0.8;
+  ctx.stroke();
+  // beads
+  const chainN = 4;
+  for (let i = 1; i < chainN; i++) {
+    const ty = pearlTopY + (pearlBotY - pearlTopY) * (i / chainN);
+    drawBead(centerX, ty, 3.5, i % 2 === 0 ? '#F8C8D8' : '#C8D8F0');
+  }
+
+  // ── umbrella ──
+  drawUmbrella(centerX, umbrellaY, umbAngle);
+
+  // ── strands ──
+  for (let si = 0; si < STRAND_DEFS.length; si++) {
+    const def = STRAND_DEFS[si];
+    const physics = strandPhysics[si];
+
+    // anchor on umbrella bottom edge
+    // offset x by umbrella rotation
+    const umbRadOffset = umbAngle * Math.PI / 180;
+    const anchorLocalX = def.xOff;
+    const anchorLocalY = 8; // just below umbrella center
+    const anchorX = centerX + anchorLocalX * Math.cos(umbRadOffset) - anchorLocalY * Math.sin(umbRadOffset);
+    const anchorY = umbrellaY + anchorLocalX * Math.sin(umbRadOffset) + anchorLocalY * Math.cos(umbRadOffset);
+
+    physics.update(dt, wind.current, t);
+    const pts = physics.getPositions(anchorX, anchorY);
+
+    // draw lines
+    ctx.strokeStyle = '#ccc';
+    ctx.lineWidth = 0.9;
+    for (let i = 0; i < pts.length - 1; i++) {
+      ctx.beginPath();
+      ctx.moveTo(pts[i].x, pts[i].y);
+      ctx.lineTo(pts[i + 1].x, pts[i + 1].y);
+      ctx.stroke();
+    }
+
+    // draw items
+    for (let i = 0; i < def.items.length; i++) {
+      const p = pts[i + 1];
+      drawItemFixed(def.items[i], p.x, p.y, beadColors[si][i]);
+    }
+  }
+
+  // ── bow (on top of everything) ──
+  drawBow(centerX, bowY);
+
+  requestAnimationFrame(frame);
+}
+
+requestAnimationFrame(ts => { last = ts; requestAnimationFrame(frame); });
+</script>
+</body>
+</html>
