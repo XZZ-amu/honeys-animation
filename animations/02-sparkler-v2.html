@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sparkler Letters v2</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #000;
+      overflow: hidden;
+      width: 100vw;
+      height: 100vh;
+    }
+    canvas {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<script>
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+
+  window.addEventListener('resize', () => {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+  });
+
+  // Warm romantic colors: pink, gold, warm orange
+  const colors = [
+    '#FFD700', // gold
+    '#FFA500', // orange
+    '#FF8C00', // dark orange
+    '#FF69B4', // hot pink
+    '#FFB6C1', // light pink
+    '#FF6347', // tomato / warm red
+    '#FFDA63', // soft gold
+    '#FFC0CB', // pink
+    '#FF4500', // orange red
+    '#FFE4B5', // moccasin / pale gold
+  ];
+
+  const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+
+  let particles = [];
+  let lastSpawnTime = 0;
+
+  // 快速喷射：每 15ms 喷一次，约 66/sec
+  const SPAWN_INTERVAL = 15;
+
+  function randomLetter() {
+    return letters[Math.floor(Math.random() * letters.length)];
+  }
+
+  function randomColor() {
+    return colors[Math.floor(Math.random() * colors.length)];
+  }
+
+  // 仙女棒参数：从屏幕底部斜伸出来
+  // 棒子底端在画布左下方，顶端（喷射点）在画布中偏上区域
+  function getStickGeometry() {
+    const w = canvas.width;
+    const h = canvas.height;
+    // 棒子底端：左下角偏内一点
+    const baseX = w * 0.22;
+    const baseY = h * 1.0; // 底部边缘之外，让棒子看起来从外伸进来
+    // 棒子顶端（火花喷射点）：画面偏中上
+    const tipX = w * 0.50;
+    const tipY = h * 0.38;
+    return { baseX, baseY, tipX, tipY };
+  }
+
+  function spawnParticle(cx, cy) {
+    // 火花喷出方向：主要向上方散开，带随机角度
+    // 以正上方（-π/2）为中心，散开约 ±100° 的扇形
+    const baseAngle = -Math.PI / 2; // 向上
+    const spread = (Math.PI * 100) / 180;
+    const angle = baseAngle + (Math.random() - 0.5) * spread * 2;
+
+    // 速度快，带随机性 → 咻咻感
+    const speed = 2.5 + Math.random() * 5.5;
+    const vx = Math.cos(angle) * speed;
+    const vy = Math.sin(angle) * speed;
+
+    // 从喷射点附近随机小偏移出生
+    const jitter = 5;
+    const x = cx + (Math.random() - 0.5) * jitter;
+    const y = cy + (Math.random() - 0.5) * jitter;
+
+    // 寿命极短：18~32 帧（约 0.3~0.53 秒）
+    const maxLife = 18 + Math.random() * 14;
+
+    particles.push({
+      x,
+      y,
+      vx,
+      vy,
+      letter: randomLetter(),
+      color: randomColor(),
+      size: 8 + Math.random() * 8,         // 稍小的字
+      alpha: 1,
+      life: 0,
+      maxLife,
+      rotation: (Math.random() - 0.5) * 0.6,
+      rotationSpeed: (Math.random() - 0.5) * 0.15,
+    });
+  }
+
+  // 绘制仙女棒本体
+  function drawStick(tipX, tipY, baseX, baseY) {
+    // 棒子本体：细线
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(tipX, tipY);
+    ctx.lineTo(baseX, baseY);
+    ctx.strokeStyle = '#8B6914'; // 深金棕色，像金属棒
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    ctx.shadowColor = 'rgba(255, 180, 50, 0.3)';
+    ctx.shadowBlur = 4;
+    ctx.stroke();
+
+    // 棒子顶端金属段（稍亮）
+    const metalEndX = tipX + (baseX - tipX) * 0.08;
+    const metalEndY = tipY + (baseY - tipY) * 0.08;
+    ctx.beginPath();
+    ctx.moveTo(tipX, tipY);
+    ctx.lineTo(metalEndX, metalEndY);
+    ctx.strokeStyle = '#C8A84B';
+    ctx.lineWidth = 3;
+    ctx.shadowColor = 'rgba(255, 220, 80, 0.5)';
+    ctx.shadowBlur = 6;
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  // 仙女棒顶端发光核心
+  function drawTip(cx, cy, time) {
+    const pulse = 0.8 + 0.2 * Math.sin(time * 0.015);
+
+    // 外光晕
+    const gradOuter = ctx.createRadialGradient(cx, cy, 0, cx, cy, 40 * pulse);
+    gradOuter.addColorStop(0, 'rgba(255, 210, 80, 0.4)');
+    gradOuter.addColorStop(0.5, 'rgba(255, 140, 0, 0.15)');
+    gradOuter.addColorStop(1, 'rgba(255, 100, 0, 0)');
+    ctx.beginPath();
+    ctx.arc(cx, cy, 40 * pulse, 0, Math.PI * 2);
+    ctx.fillStyle = gradOuter;
+    ctx.fill();
+
+    // 中光晕
+    const gradMid = ctx.createRadialGradient(cx, cy, 0, cx, cy, 14 * pulse);
+    gradMid.addColorStop(0, 'rgba(255, 240, 160, 0.95)');
+    gradMid.addColorStop(0.6, 'rgba(255, 190, 40, 0.6)');
+    gradMid.addColorStop(1, 'rgba(255, 140, 0, 0)');
+    ctx.beginPath();
+    ctx.arc(cx, cy, 14 * pulse, 0, Math.PI * 2);
+    ctx.fillStyle = gradMid;
+    ctx.fill();
+
+    // 亮核
+    const gradCore = ctx.createRadialGradient(cx, cy, 0, cx, cy, 5);
+    gradCore.addColorStop(0, 'rgba(255, 255, 230, 1)');
+    gradCore.addColorStop(0.5, 'rgba(255, 220, 80, 0.95)');
+    gradCore.addColorStop(1, 'rgba(255, 180, 0, 0)');
+    ctx.beginPath();
+    ctx.arc(cx, cy, 5, 0, Math.PI * 2);
+    ctx.fillStyle = gradCore;
+    ctx.fill();
+  }
+
+  // 绘制几根静态"灼烧"细线，增强仙女棒燃烧质感
+  function drawBurnStreaks(cx, cy, time) {
+    const streakCount = 6;
+    ctx.save();
+    for (let i = 0; i < streakCount; i++) {
+      const phase = (time * 0.008 + i * 1.05) % (Math.PI * 2);
+      const len = 6 + 5 * Math.sin(phase);
+      const angle = (i / streakCount) * Math.PI * 2 + time * 0.003;
+      const ex = cx + Math.cos(angle) * len;
+      const ey = cy + Math.sin(angle) * len;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(ex, ey);
+      ctx.strokeStyle = `rgba(255, ${180 + Math.floor(40 * Math.sin(phase))}, 40, ${0.5 + 0.4 * Math.sin(phase)})`;
+      ctx.lineWidth = 1;
+      ctx.lineCap = 'round';
+      ctx.shadowColor = '#FFD700';
+      ctx.shadowBlur = 3;
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  let lastTime = 0;
+
+  function animate(timestamp) {
+    requestAnimationFrame(animate);
+
+    const dt = timestamp - lastTime;
+    lastTime = timestamp;
+
+    const { baseX, baseY, tipX, tipY } = getStickGeometry();
+
+    // 清空
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // 先画棒子（在粒子下面）
+    drawStick(tipX, tipY, baseX, baseY);
+
+    // 高频喷射：每次喷 2~4 颗，密集感
+    if (timestamp - lastSpawnTime > SPAWN_INTERVAL) {
+      const count = 2 + Math.floor(Math.random() * 3); // 2~4
+      for (let i = 0; i < count; i++) {
+        spawnParticle(tipX, tipY);
+      }
+      lastSpawnTime = timestamp;
+    }
+
+    // 更新和绘制粒子
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.life++;
+
+      const progress = p.life / p.maxLife; // 0 → 1
+
+      // 极速淡出：前 15% 亮起，后 85% 快速熄灭（像真实火花）
+      if (progress < 0.15) {
+        p.alpha = progress / 0.15;
+      } else {
+        // 二次方曲线，越到后期越快消失
+        const t = (progress - 0.15) / 0.85;
+        p.alpha = 1 - t * t;
+      }
+
+      // 快速缩小
+      const currentSize = p.size * (1 - progress * 0.85);
+
+      // 重力更强，让火花快速下坠，增强真实感
+      p.vy += 0.06;
+      // 空气阻力较弱，保持速度感
+      p.vx *= 0.992;
+      p.vy *= 0.992;
+
+      p.x += p.vx;
+      p.y += p.vy;
+      p.rotation += p.rotationSpeed;
+
+      if (p.life >= p.maxLife) {
+        particles.splice(i, 1);
+        continue;
+      }
+
+      // 绘制字母
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, p.alpha);
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.rotation);
+      ctx.font = `bold ${Math.max(1, currentSize)}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+
+      // 发光效果，alpha 高时更亮
+      ctx.shadowColor = p.color;
+      ctx.shadowBlur = 10 * p.alpha;
+      ctx.fillStyle = p.color;
+      ctx.fillText(p.letter, 0, 0);
+
+      ctx.restore();
+    }
+
+    // 棒子顶端发光（在粒子上面，始终可见）
+    drawTip(tipX, tipY, timestamp);
+    drawBurnStreaks(tipX, tipY, timestamp);
+  }
+
+  requestAnimationFrame(animate);
+</script>
+</body>
+</html>
