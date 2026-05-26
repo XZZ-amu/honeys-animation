@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wind Chime v3</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #f0f0f5;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+// ─── Design tokens ─────────────────────────────────────────────────────────
+const COLORS = ['#FF8C00', '#4169E1', '#FF1493', '#32CD32', '#ADFF2F'];
+const BG = '#f0f0f5';
+const LINE_COLOR = '#999999';
+const RING_COLOR = '#999999';
+
+// ─── Physics constants ──────────────────────────────────────────────────────
+const GRAVITY_Y = 1200;     // px/s² downward pull
+const DAMPING   = 0.978;    // velocity retention per frame (lower = more drag)
+const CONSTRAINT_ITER = 24;
+
+// ─── Canvas sizing ──────────────────────────────────────────────────────────
+let W, H;
+let RING_CX, RING_CY;
+let RING_RX, RING_RY;        // ellipse radii
+let HANG_Y;                  // y from which chimes hang (bottom of ring)
+
+function resize() {
+  W = canvas.width  = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+
+  RING_CX = W * 0.5;
+  RING_CY = H * 0.16;          // ring center
+  RING_RX = W * 0.11;          // horizontal radius
+  RING_RY = RING_RX * 0.28;    // vertical radius → perspective squish
+  HANG_Y  = RING_CY + RING_RY; // bottom arc of ellipse
+}
+resize();
+window.addEventListener('resize', () => { resize(); initChimes(); });
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+const ALPHA = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+const randLetter = () => ALPHA[Math.floor(Math.random() * 26)];
+const randColor  = () => COLORS[Math.floor(Math.random() * COLORS.length)];
+const randInt    = (a, b) => Math.floor(Math.random() * (b - a + 1)) + a;
+const randFloat  = (a, b) => Math.random() * (b - a) + a;
+
+// ─── Verlet chain (ribbon physics) ─────────────────────────────────────────
+//
+// Each node stores position + previous position.
+// Node 0 is the fixed anchor (on the ring bottom).
+// Wind force is tapered: top nodes get little force, tip gets maximum.
+// Segment length is shorter to give a denser, ribbon-like appearance.
+
+class Chain {
+  constructor(anchorX, anchorY, letters, colors, segLen) {
+    this.ax = anchorX;
+    this.ay = anchorY;
+    this.letters = letters;
+    this.colors  = colors;
+    this.segLen  = segLen;
+
+    const n = letters.length + 1; // +1 for anchor node above first letter
+    this.nodes = [];
+    for (let i = 0; i < n; i++) {
+      this.nodes.push({
+        x: anchorX,
+        y: anchorY + i * segLen,
+        px: anchorX,
+        py: anchorY + i * segLen,
+      });
+    }
+  }
+
+  // windFx/windFy in px (impulse per frame)
+  applyWind(windFx, windFy) {
+    const n = this.nodes.length;
+    for (let i = 1; i < n; i++) {
+      const t = i / (n - 1);               // 0 = anchor, 1 = tip
+      // Cubic taper: tip gets 8x the impulse of the node just below anchor
+      const scale = 0.15 + t * t * t * 7.85;
+      const nd = this.nodes[i];
+      nd.x += windFx * scale;
+      nd.y += windFy * scale;
+    }
+  }
+
+  step(dt) {
+    const dt2 = dt * dt;
+
+    // Verlet integrate
+    for (let i = 1; i < this.nodes.length; i++) {
+      const nd = this.nodes[i];
+      const vx = (nd.x - nd.px) * DAMPING;
+      const vy = (nd.y - nd.py) * DAMPING;
+      nd.px = nd.x;
+      nd.py = nd.y;
+      nd.x += vx;
+      nd.y += vy + GRAVITY_Y * dt2;
+    }
+
+    // Constrain segment lengths
+    for (let iter = 0; iter < CONSTRAINT_ITER; iter++) {
+      // Re-pin anchor
+      this.nodes[0].x = this.ax;
+      this.nodes[0].y = this.ay;
+
+      for (let i = 0; i < this.nodes.length - 1; i++) {
+        const a = this.nodes[i];
+        const b = this.nodes[i + 1];
+        const dx   = b.x - a.x;
+        const dy   = b.y - a.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 0.001;
+        const diff = (dist - this.segLen) / dist;
+        if (i === 0) {
+          b.x -= dx * diff;
+          b.y -= dy * diff;
+        } else {
+          const half = diff * 0.5;
+          a.x += dx * half;
+          a.y += dy * half;
+          b.x -= dx * half;
+          b.y -= dy * half;
+        }
+      }
+    }
+  }
+
+  draw(fontSize) {
+    const nodes = this.nodes;
+
+    // Thin guide line through nodes (barely visible connector)
+    ctx.strokeStyle = 'rgba(180,180,180,0.35)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(nodes[0].x, nodes[0].y);
+    for (let i = 1; i < nodes.length; i++) {
+      ctx.lineTo(nodes[i].x, nodes[i].y);
+    }
+    ctx.stroke();
+
+    // Letters start from node[1] (node[0] is the invisible anchor)
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = `900 ${fontSize}px "Arial Black", Arial, sans-serif`;
+    for (let i = 0; i < this.letters.length; i++) {
+      const nd = nodes[i + 1];
+      ctx.fillStyle = this.colors[i];
+      ctx.fillText(this.letters[i], nd.x, nd.y);
+    }
+  }
+}
+
+// ─── Chime collection ───────────────────────────────────────────────────────
+let chimes = [];
+
+// Anchor positions spread along bottom arc of ellipse
+function getAnchorPositions(count) {
+  const positions = [];
+  // Spread anchors across -70°…+70° of the ellipse bottom arc
+  const spreadDeg = 140;
+  const startDeg  = 90 - spreadDeg / 2;  // in standard math angle (90 = bottom)
+  for (let i = 0; i < count; i++) {
+    const t   = count === 1 ? 0.5 : i / (count - 1);
+    const deg = startDeg + t * spreadDeg;
+    const rad = (deg * Math.PI) / 180;
+    const x   = RING_CX + RING_RX * Math.cos(rad);
+    const y   = RING_CY + RING_RY * Math.sin(rad);
+    positions.push({ x, y });
+  }
+  return positions;
+}
+
+function initChimes() {
+  chimes = [];
+  const count = 7; // fixed 7 chimes for good spread
+  const anchors = getAnchorPositions(count);
+
+  // Varying segment lengths for "soft ribbon" feel
+  const segLens   = [30, 32, 28, 34, 30, 28, 32];
+  // Varying number of letters (short to long, ragged bottom)
+  const letterCounts = [5, 7, 6, 8, 5, 7, 6];
+  // Font sizes vary slightly for depth illusion
+  const fontSizes = [28, 30, 32, 34, 28, 30, 26];
+
+  for (let i = 0; i < count; i++) {
+    const n = letterCounts[i];
+    const letters = Array.from({ length: n }, randLetter);
+    const colors  = Array.from({ length: n }, randColor);
+    chimes.push({
+      chain:    new Chain(anchors[i].x, anchors[i].y, letters, colors, segLens[i]),
+      delay:    i * randFloat(0.06, 0.12),  // stagger left → right
+      fontSize: fontSizes[i],
+    });
+  }
+}
+
+initChimes();
+
+// ─── Wind state machine ─────────────────────────────────────────────────────
+// States: REST → GUST_BUILD → GUST_BLOW → GUST_DECAY → REST
+const WS = { REST: 0, BUILD: 1, BLOW: 2, DECAY: 3 };
+
+let wState    = WS.REST;
+let wTimer    = 0;
+let wDuration = { rest: 1.2, build: 0, blow: 0, decay: 0 };
+let wStrength = 0;       // current wind magnitude
+let wTarget   = 0;
+let wAngle    = 0;
+
+// Micro-sway state (always present)
+let swayTime = 0;
+
+function startGust() {
+  wState  = WS.BUILD;
+  wTimer  = 0;
+  wAngle  = randFloat(-0.15, 0.15);   // near-horizontal, left → right
+  wTarget = randFloat(1800, 2800);
+  wDuration.build = randFloat(0.3, 0.6);
+  wDuration.blow  = randFloat(1.0, 1.8);
+  wDuration.decay = randFloat(0.6, 1.1);
+}
+
+// ─── Draw ring + suspension wire ────────────────────────────────────────────
+function drawStructure() {
+  // Suspension wire: top-center → top of ellipse
+  const wireTopY = 0;
+  const wireBotY = RING_CY - RING_RY;
+
+  ctx.strokeStyle = LINE_COLOR;
+  ctx.lineWidth   = 1;
+  ctx.beginPath();
+  ctx.moveTo(RING_CX, wireTopY);
+  ctx.lineTo(RING_CX, wireBotY);
+  ctx.stroke();
+
+  // Ellipse ring (perspective: stroke only, no fill)
+  ctx.strokeStyle = RING_COLOR;
+  ctx.lineWidth   = 2;
+  ctx.beginPath();
+  ctx.ellipse(RING_CX, RING_CY, RING_RX, RING_RY, 0, 0, Math.PI * 2);
+  ctx.stroke();
+}
+
+// ─── Main loop ──────────────────────────────────────────────────────────────
+let lastTime = null;
+
+function loop(ts) {
+  requestAnimationFrame(loop);
+  if (!lastTime) { lastTime = ts; return; }
+  const dt = Math.min((ts - lastTime) / 1000, 0.05);
+  lastTime = ts;
+
+  wTimer    += dt;
+  swayTime  += dt;
+
+  // Wind state machine
+  switch (wState) {
+    case WS.REST:
+      wStrength = 0;
+      if (wTimer >= wDuration.rest) startGust();
+      break;
+
+    case WS.BUILD:
+      wStrength = easeIn(Math.min(wTimer / wDuration.build, 1)) * wTarget;
+      if (wTimer >= wDuration.build) {
+        wState = WS.BLOW;
+        wTimer = 0;
+      }
+      break;
+
+    case WS.BLOW:
+      // Gust turbulence: sine ripple during blow
+      wStrength = wTarget * (0.82 + 0.18 * Math.sin(wTimer * 7.3));
+      if (wTimer >= wDuration.blow) {
+        wState = WS.DECAY;
+        wTimer = 0;
+      }
+      break;
+
+    case WS.DECAY:
+      wStrength = easeOut(1 - Math.min(wTimer / wDuration.decay, 1)) * wTarget;
+      if (wTimer >= wDuration.decay) {
+        wStrength = 0;
+        wState    = WS.REST;
+        wTimer    = 0;
+        wDuration.rest = randFloat(1.2, 2.6);
+      }
+      break;
+  }
+
+  // Wind impulse (per-frame)
+  const windFx = Math.cos(wAngle) * wStrength * dt;
+  const windFy = Math.sin(wAngle) * wStrength * dt * 0.06; // barely vertical
+
+  // Apply wind with chain stagger
+  for (let ci = 0; ci < chimes.length; ci++) {
+    const { chain, delay } = chimes[ci];
+    // Each chime starts feeling the wind after its delay
+    const active = wState === WS.BLOW || wState === WS.BUILD
+      ? wTimer > delay
+      : wTimer > 0;  // decay/rest always active once timer started
+
+    if (active && wStrength > 5) {
+      chain.applyWind(windFx, windFy);
+    }
+
+    // Always apply micro-sway: very small random impulses keep ribbons alive
+    if (Math.random() < 0.012) {
+      const swayFx = randFloat(-40, 40) * dt;
+      const swayFy = randFloat(-8, 8) * dt;
+      chain.applyWind(swayFx, swayFy);
+    }
+  }
+
+  // Physics step
+  for (const { chain } of chimes) {
+    chain.step(dt);
+  }
+
+  // ── Render ──────────────────────────────────────────────────────────────
+  ctx.fillStyle = BG;
+  ctx.fillRect(0, 0, W, H);
+
+  drawStructure();
+
+  for (const { chain, fontSize } of chimes) {
+    chain.draw(fontSize);
+  }
+}
+
+// Easing helpers
+function easeIn(t)  { return t * t * t; }
+function easeOut(t) { return 1 - (1 - t) * (1 - t) * (1 - t); }
+
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

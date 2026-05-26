@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wind Chime</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #f0f0f5;
+      overflow: hidden;
+      width: 100vw;
+      height: 100vh;
+    }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+window.addEventListener('resize', () => {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+  initChimes();
+});
+
+// Design tokens
+const BG = '#f0f0f5';
+const ROPE_COLOR = '#ccc';
+const BAR_COLOR = '#999';
+const LETTER_COLORS = ['#FF8C00', '#4169E1', '#FF1493', '#32CD32', '#ADFF2F'];
+const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+// Physical constants
+const GRAVITY = 980;       // px/s²  (visual scale)
+const DAMPING = 0.012;     // damping coefficient per frame
+const LETTER_SIZE = 38;    // px
+const STRING_BASE = 80;    // px from top of string to bar attach
+const BAR_HEIGHT = 28;     // y offset for bar below mount
+
+let chimes = [];
+let time = 0;
+
+// Wind state machine
+let wind = {
+  phase: 'idle',    // idle | gust | decay
+  timer: 0,
+  idleDuration: 0,
+  gustDuration: 0,
+  force: 0,
+  targetForce: 0,
+  direction: 1,
+};
+
+function randomRange(a, b) { return a + Math.random() * (b - a); }
+
+function pickColor(i) {
+  return LETTER_COLORS[i % LETTER_COLORS.length];
+}
+
+function pickLetter(i) {
+  return LETTERS[i % LETTERS.length];
+}
+
+class Chime {
+  constructor(x, mountY, stringLength, letter, color, delayPhase) {
+    this.mountX = x;
+    this.mountY = mountY;
+    this.stringLength = stringLength;
+    this.letter = letter;
+    this.color = color;
+    this.delayPhase = delayPhase; // wind delay offset in seconds
+
+    // Pendulum state
+    this.angle = 0;        // radians from vertical
+    this.angularVel = 0;   // rad/s
+
+    // Flash state for "ding" effect
+    this.flashTimer = 0;
+    this.prevAngle = 0;
+
+    // Natural frequency: omega = sqrt(g/L)
+    this.L = stringLength;
+    this.omega = Math.sqrt(GRAVITY / this.L);
+  }
+
+  applyWind(force) {
+    // Wind applies angular acceleration
+    this.angularVel += force * 0.00012;
+  }
+
+  update(dt, windForce, windDelay) {
+    // Pendulum equation with damping
+    // alpha = -(g/L)*sin(theta) - damping*angularVel + windTorque
+    const sinTheta = Math.sin(this.angle);
+    const alpha = -(GRAVITY / this.L) * sinTheta
+                  - DAMPING * this.angularVel * 60  // scale damping per frame
+                  + windForce * 0.00010 * windDelay;
+
+    this.angularVel += alpha * dt;
+    this.prevAngle = this.angle;
+    this.angle += this.angularVel * dt;
+
+    // Clamp angle to ±25 degrees
+    const MAX_ANGLE = 0.44; // ~25 deg
+    if (this.angle > MAX_ANGLE) {
+      this.angle = MAX_ANGLE;
+      this.angularVel *= -0.35;
+      this.flashTimer = 0.18; // ding!
+    }
+    if (this.angle < -MAX_ANGLE) {
+      this.angle = -MAX_ANGLE;
+      this.angularVel *= -0.35;
+      this.flashTimer = 0.18;
+    }
+
+    // Detect zero crossing (ding at center swing)
+    if (this.prevAngle * this.angle < 0 && Math.abs(this.angularVel) > 0.5) {
+      this.flashTimer = 0.10;
+    }
+
+    if (this.flashTimer > 0) this.flashTimer -= dt;
+  }
+
+  draw(ctx) {
+    const px = this.mountX + Math.sin(this.angle) * this.L;
+    const py = this.mountY + Math.cos(this.angle) * this.L;
+
+    // Draw string
+    ctx.beginPath();
+    ctx.moveTo(this.mountX, this.mountY);
+    ctx.lineTo(px, py);
+    ctx.strokeStyle = ROPE_COLOR;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Draw letter
+    const isFlash = this.flashTimer > 0;
+    ctx.font = `bold ${LETTER_SIZE}px Arial, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    // Rotate letter with pendulum
+    ctx.save();
+    ctx.translate(px, py);
+    ctx.rotate(this.angle);
+
+    if (isFlash) {
+      // Flash: invert color briefly (white fill, colored outline)
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(this.letter, 0, 0);
+      ctx.strokeStyle = this.color;
+      ctx.lineWidth = 2;
+      ctx.strokeText(this.letter, 0, 0);
+    } else {
+      ctx.fillStyle = this.color;
+      ctx.fillText(this.letter, 0, 0);
+    }
+
+    ctx.restore();
+  }
+}
+
+let barMountX, barMountY, barWidth;
+
+function initChimes() {
+  chimes = [];
+  const W = canvas.width;
+  const H = canvas.height;
+
+  const chimeCount = Math.min(10, Math.max(6, Math.floor(W / 90)));
+  barWidth = chimeCount * 72;
+  barMountX = W / 2 - barWidth / 2;
+  barMountY = 60;
+
+  const spacing = barWidth / (chimeCount - 1);
+
+  // String lengths vary for visual interest and different natural frequencies
+  const baseLengths = [160, 200, 175, 220, 155, 190, 210, 165, 195, 180];
+
+  for (let i = 0; i < chimeCount; i++) {
+    const x = barMountX + i * spacing;
+    const mountY = barMountY + BAR_HEIGHT;
+    const L = (baseLengths[i % baseLengths.length] || 170) + randomRange(-10, 10);
+    const letter = pickLetter(i);
+    const color = pickColor(i);
+    const delay = i * 0.12 + randomRange(0, 0.05); // cascading wind delay
+    chimes.push(new Chime(x, mountY, L, letter, color, delay));
+  }
+}
+
+function scheduleNextGust() {
+  wind.phase = 'idle';
+  wind.timer = 0;
+  wind.idleDuration = randomRange(1.8, 4.5);
+  wind.force = 0;
+}
+
+function startGust() {
+  wind.phase = 'gust';
+  wind.timer = 0;
+  wind.gustDuration = randomRange(0.6, 1.4);
+  wind.targetForce = randomRange(300, 600) * (Math.random() < 0.5 ? 1 : -1);
+  wind.decayDuration = randomRange(0.8, 1.8);
+}
+
+function updateWind(dt) {
+  wind.timer += dt;
+
+  if (wind.phase === 'idle') {
+    wind.force = 0;
+    if (wind.timer >= wind.idleDuration) startGust();
+
+  } else if (wind.phase === 'gust') {
+    // Ramp up quickly
+    const t = Math.min(wind.timer / 0.25, 1);
+    wind.force = wind.targetForce * t;
+    if (wind.timer >= wind.gustDuration) {
+      wind.phase = 'decay';
+      wind.timer = 0;
+    }
+
+  } else if (wind.phase === 'decay') {
+    // Ease out
+    const t = Math.max(1 - wind.timer / wind.decayDuration, 0);
+    wind.force = wind.targetForce * t * t;
+    if (wind.timer >= wind.decayDuration) {
+      scheduleNextGust();
+    }
+  }
+}
+
+function drawBar() {
+  const y = barMountY + BAR_HEIGHT;
+
+  // Roof mount line at top center
+  ctx.beginPath();
+  ctx.moveTo(canvas.width / 2, 0);
+  ctx.lineTo(canvas.width / 2, barMountY);
+  ctx.strokeStyle = ROPE_COLOR;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Horizontal bar
+  ctx.beginPath();
+  ctx.moveTo(barMountX - 8, y);
+  ctx.lineTo(barMountX + barWidth + 8, y);
+  ctx.strokeStyle = BAR_COLOR;
+  ctx.lineWidth = 5;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+
+  // Small vertical connector from mount to bar
+  ctx.beginPath();
+  ctx.moveTo(canvas.width / 2, barMountY);
+  ctx.lineTo(canvas.width / 2, y);
+  ctx.strokeStyle = ROPE_COLOR;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+}
+
+// Wind delay factor per chime: later chimes feel wind slightly later
+// We encode this as a phase-delayed force multiplier
+function windDelayFactor(chime, windPhase) {
+  // Each chime has delayPhase offset; simulate as a smooth ramp
+  // The force felt by this chime = wind.force * ramp(time - delayPhase)
+  // We compute a simple lag: if wind is blowing, early chimes get it first
+  const lag = chime.delayPhase;
+  // Return 0..1 weight based on how long the wind has been active
+  if (wind.phase === 'idle') return 0;
+  const elapsed = wind.timer - lag;
+  if (elapsed <= 0) return 0;
+  return Math.min(elapsed / 0.3, 1); // ramp over 0.3s
+}
+
+let lastTime = null;
+
+function animate(timestamp) {
+  if (!lastTime) lastTime = timestamp;
+  const dt = Math.min((timestamp - lastTime) / 1000, 0.05); // cap at 50ms
+  lastTime = timestamp;
+  time += dt;
+
+  // Clear
+  ctx.fillStyle = BG;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Update wind
+  updateWind(dt);
+
+  // Update & draw chimes
+  drawBar();
+
+  for (const chime of chimes) {
+    const wf = windDelayFactor(chime, wind.phase);
+    const effectiveForce = wind.force * wf;
+    chime.update(dt, effectiveForce, 1);
+    chime.draw(ctx);
+  }
+
+  requestAnimationFrame(animate);
+}
+
+// Init
+initChimes();
+scheduleNextGust();
+requestAnimationFrame(animate);
+</script>
+</body>
+</html>

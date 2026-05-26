@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wind Chime v4</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #f0f0f5;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+// ─── Design tokens ─────────────────────────────────────────────────────────
+const COLORS    = ['#FF8C00', '#4169E1', '#FF1493', '#32CD32', '#ADFF2F'];
+const BG        = '#f0f0f5';
+const LINE_COLOR = '#aaaaaa';
+const RING_COLOR = '#999999';
+
+// ─── Physics ────────────────────────────────────────────────────────────────
+// Gentle: damp hard, gravity just enough to keep chain taut
+const GRAVITY_Y      = 980;    // px/s²
+const DAMPING        = 0.965;  // per-frame velocity retention (lower = stickier)
+const CONSTRAINT_ITER = 20;
+
+// Wind budget: target max angular swing ≈ ±10°.
+// For a chain of ~200px, sin(10°)≈0.17 → lateral offset ≈ 34px.
+// We achieve this with tiny frame-by-frame impulses, never large kicks.
+const WIND_MAX_IMPULSE  = 0.28;  // px added per frame at tip (world-unit impulse)
+const SWAY_BASE_IMPULSE = 0.055; // breathing micro-sway impulse at tip
+
+// ─── Canvas sizing ──────────────────────────────────────────────────────────
+let W, H, RING_CX, RING_CY, RING_RX, RING_RY, HANG_Y;
+
+function resize() {
+  W = canvas.width  = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+  RING_CX = W * 0.5;
+  RING_CY = H * 0.15;
+  RING_RX = W * 0.11;
+  RING_RY = RING_RX * 0.28;
+  HANG_Y  = RING_CY + RING_RY;
+}
+resize();
+window.addEventListener('resize', () => { resize(); initChimes(); });
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+const ALPHA     = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+const randLetter  = () => ALPHA[Math.floor(Math.random() * 26)];
+const randColor   = () => COLORS[Math.floor(Math.random() * COLORS.length)];
+const randInt     = (a, b) => Math.floor(Math.random() * (b - a + 1)) + a;
+const randFloat   = (a, b) => Math.random() * (b - a) + a;
+
+// ─── Verlet chain ──────────────────────────────────────────────────────────
+// Node 0 = fixed anchor. Each subsequent node is one letter.
+// Wind impulse is applied with strong tip-weighting so top barely moves.
+class Chain {
+  constructor(anchorX, anchorY, letters, colors, segLen) {
+    this.ax      = anchorX;
+    this.ay      = anchorY;
+    this.letters = letters;
+    this.colors  = colors;
+    this.segLen  = segLen;
+
+    // Phase offsets for per-chain breath oscillator
+    this.breathPhase = randFloat(0, Math.PI * 2);
+    this.breathFreq  = randFloat(0.28, 0.42);   // Hz – very slow "alive" cycle
+
+    const n = letters.length + 1;
+    this.nodes = [];
+    for (let i = 0; i < n; i++) {
+      this.nodes.push({
+        x: anchorX, y: anchorY + i * segLen,
+        px: anchorX, py: anchorY + i * segLen,
+      });
+    }
+  }
+
+  // impulseX: horizontal impulse in pixels added to tip.
+  // Distributed with a steep taper — top anchor is fixed, next node feels ~2%,
+  // bottom tip feels 100%.  This creates the "wave travels down" effect.
+  applyImpulse(impulseX) {
+    const n = this.nodes.length;
+    for (let i = 1; i < n; i++) {
+      const t     = (i - 1) / (n - 2 || 1);     // 0 = first free node, 1 = tip
+      // quintic taper: top free node gets very little
+      const scale = t * t * t * t * t;
+      this.nodes[i].x += impulseX * scale;
+    }
+  }
+
+  step(dt) {
+    const dt2 = dt * dt;
+    for (let i = 1; i < this.nodes.length; i++) {
+      const nd = this.nodes[i];
+      const vx = (nd.x - nd.px) * DAMPING;
+      const vy = (nd.y - nd.py) * DAMPING;
+      nd.px = nd.x;
+      nd.py = nd.y;
+      nd.x += vx;
+      nd.y += vy + GRAVITY_Y * dt2;
+    }
+    // Constrain
+    for (let iter = 0; iter < CONSTRAINT_ITER; iter++) {
+      this.nodes[0].x = this.ax;
+      this.nodes[0].y = this.ay;
+      for (let i = 0; i < this.nodes.length - 1; i++) {
+        const a = this.nodes[i], b = this.nodes[i + 1];
+        const dx   = b.x - a.x, dy = b.y - a.y;
+        const dist = Math.hypot(dx, dy) || 0.001;
+        const diff = (dist - this.segLen) / dist;
+        if (i === 0) {
+          b.x -= dx * diff; b.y -= dy * diff;
+        } else {
+          const h = diff * 0.5;
+          a.x += dx * h; a.y += dy * h;
+          b.x -= dx * h; b.y -= dy * h;
+        }
+      }
+    }
+  }
+
+  draw(fontSize) {
+    const nd = this.nodes;
+    // Connector line
+    ctx.strokeStyle = 'rgba(170,170,170,0.4)';
+    ctx.lineWidth   = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(nd[0].x, nd[0].y);
+    for (let i = 1; i < nd.length; i++) ctx.lineTo(nd[i].x, nd[i].y);
+    ctx.stroke();
+    // Letters
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = `900 ${fontSize}px "Arial Black", Arial, sans-serif`;
+    for (let i = 0; i < this.letters.length; i++) {
+      ctx.fillStyle = this.colors[i];
+      ctx.fillText(this.letters[i], nd[i + 1].x, nd[i + 1].y);
+    }
+  }
+}
+
+// ─── Chime collection ───────────────────────────────────────────────────────
+let chimes = [];
+
+function getAnchorPositions(count) {
+  const positions = [];
+  const spreadDeg = 130;
+  const startDeg  = 90 - spreadDeg / 2;
+  for (let i = 0; i < count; i++) {
+    const t   = count === 1 ? 0.5 : i / (count - 1);
+    const deg = startDeg + t * spreadDeg;
+    const rad = (deg * Math.PI) / 180;
+    positions.push({
+      x: RING_CX + RING_RX * Math.cos(rad),
+      y: RING_CY + RING_RY * Math.sin(rad),
+    });
+  }
+  return positions;
+}
+
+function initChimes() {
+  chimes = [];
+  const count     = 7;
+  const anchors   = getAnchorPositions(count);
+  const segLens   = [30, 32, 28, 34, 30, 28, 32];
+  const letterCnts = [5, 7, 6, 8, 5, 7, 6];
+  const fontSizes = [28, 30, 32, 34, 28, 30, 26];
+
+  for (let i = 0; i < count; i++) {
+    const n       = letterCnts[i];
+    const letters = Array.from({ length: n }, randLetter);
+    const colors  = Array.from({ length: n }, randColor);
+    chimes.push({
+      chain:      new Chain(anchors[i].x, anchors[i].y, letters, colors, segLens[i]),
+      fontSize:   fontSizes[i],
+      windDelay:  i * randFloat(0.04, 0.09),  // chimes feel wind left→right
+    });
+  }
+}
+initChimes();
+
+// ─── Wind state machine ─────────────────────────────────────────────────────
+// Two layers:
+//   1. Constant micro-sway: each chain has its own slow sinusoidal breath.
+//   2. Occasional gusts: slightly larger horizontal impulse, still ≤ 15° max.
+//
+// "Gust" is defined here as WIND_MAX_IMPULSE over ~0.5s of apply time,
+// which at DAMPING=0.965 keeps tip offset well under 15°.
+
+const WS = { REST: 0, BUILD: 1, BLOW: 2, DECAY: 3 };
+let wState    = WS.REST;
+let wTimer    = 0;
+let wDir      = 1;         // +1 right, -1 left
+let wStrength = 0;         // 0..1 envelope
+let wDur      = { rest: 2.0, build: 0.5, blow: 1.2, decay: 0.8 };
+
+function startGust() {
+  wState        = WS.BUILD;
+  wTimer        = 0;
+  wDir          = Math.random() < 0.5 ? 1 : -1;
+  wDur.build    = randFloat(0.3, 0.6);
+  wDur.blow     = randFloat(0.8, 1.6);
+  wDur.decay    = randFloat(0.5, 1.0);
+}
+
+function updateWind(dt) {
+  wTimer += dt;
+  switch (wState) {
+    case WS.REST:
+      wStrength = 0;
+      if (wTimer >= wDur.rest) startGust();
+      break;
+    case WS.BUILD:
+      wStrength = easeIn(Math.min(wTimer / wDur.build, 1));
+      if (wTimer >= wDur.build) { wState = WS.BLOW; wTimer = 0; }
+      break;
+    case WS.BLOW:
+      // Subtle flutter: ±8% ripple on top of base
+      wStrength = 0.92 + 0.08 * Math.sin(wTimer * 6.1);
+      if (wTimer >= wDur.blow) { wState = WS.DECAY; wTimer = 0; }
+      break;
+    case WS.DECAY:
+      wStrength = easeOut(1 - Math.min(wTimer / wDur.decay, 1));
+      if (wTimer >= wDur.decay) {
+        wStrength   = 0;
+        wState      = WS.REST;
+        wTimer      = 0;
+        wDur.rest   = randFloat(1.5, 3.5);
+      }
+      break;
+  }
+}
+
+// ─── Draw structure ─────────────────────────────────────────────────────────
+function drawStructure() {
+  // Suspension wire
+  ctx.strokeStyle = LINE_COLOR;
+  ctx.lineWidth   = 1;
+  ctx.beginPath();
+  ctx.moveTo(RING_CX, 0);
+  ctx.lineTo(RING_CX, RING_CY - RING_RY);
+  ctx.stroke();
+
+  // Ring (ellipse)
+  ctx.strokeStyle = RING_COLOR;
+  ctx.lineWidth   = 2;
+  ctx.beginPath();
+  ctx.ellipse(RING_CX, RING_CY, RING_RX, RING_RY, 0, 0, Math.PI * 2);
+  ctx.stroke();
+}
+
+// ─── Main loop ──────────────────────────────────────────────────────────────
+let lastTime = null;
+let totalTime = 0;
+
+function loop(ts) {
+  requestAnimationFrame(loop);
+  if (!lastTime) { lastTime = ts; return; }
+  const dt  = Math.min((ts - lastTime) / 1000, 0.04);
+  lastTime  = ts;
+  totalTime += dt;
+
+  updateWind(dt);
+
+  // ── Apply forces to each chain ──────────────────────────────────────────
+  for (let ci = 0; ci < chimes.length; ci++) {
+    const { chain, windDelay } = chimes[ci];
+
+    // 1) Breath: per-chain slow sinusoidal sway — always present
+    //    Amplitude is tiny: ±SWAY_BASE_IMPULSE px/frame at tip
+    const breath = Math.sin(totalTime * chain.breathFreq * Math.PI * 2 + chain.breathPhase);
+    chain.applyImpulse(breath * SWAY_BASE_IMPULSE);
+
+    // 2) Gust: active only when wStrength > 0, staggered by windDelay
+    if (wStrength > 0) {
+      const elapsed = wTimer - windDelay;  // how long this chime has felt wind
+      if (elapsed > 0) {
+        // Gust impulse: direction * strength envelope * max budget
+        const gustEnv = Math.min(elapsed / 0.15, 1.0);  // quick 0.15s local onset
+        const impulse = wDir * wStrength * gustEnv * WIND_MAX_IMPULSE;
+        chain.applyImpulse(impulse);
+      }
+    }
+
+    chain.step(dt);
+  }
+
+  // ── Render ──────────────────────────────────────────────────────────────
+  ctx.fillStyle = BG;
+  ctx.fillRect(0, 0, W, H);
+
+  drawStructure();
+
+  for (const { chain, fontSize } of chimes) {
+    chain.draw(fontSize);
+  }
+}
+
+// Easing
+function easeIn(t)  { return t * t * t; }
+function easeOut(t) { return 1 - (1 - t) ** 3; }
+
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wind Chime</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #f0f0f5;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+const COLORS = ['#FF8C00', '#4169E1', '#FF1493', '#32CD32', '#ADFF2F'];
+const FONT_SIZE = 34;
+const SEGMENT_LEN = 46;
+const GRAVITY = 980;
+const DAMPING = 0.985;
+const CONSTRAINT_ITER = 20;
+
+let W, H, BAR_Y;
+
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+  BAR_Y = H * 0.10;
+}
+resize();
+window.addEventListener('resize', () => { resize(); initChimes(); });
+
+// ─── Letters ───────────────────────────────────────────────────────────────
+const ALPHA = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+function randLetter() { return ALPHA[Math.floor(Math.random() * 26)]; }
+function randColor() { return COLORS[Math.floor(Math.random() * COLORS.length)]; }
+function randInt(a, b) { return Math.floor(Math.random() * (b - a + 1)) + a; }
+function randFloat(a, b) { return Math.random() * (b - a) + a; }
+
+// ─── Physics: Verlet chain ──────────────────────────────────────────────────
+class Chain {
+  constructor(anchorX, anchorY, numNodes) {
+    this.anchorX = anchorX;
+    this.anchorY = anchorY;
+    this.nodes = [];
+    for (let i = 0; i < numNodes; i++) {
+      this.nodes.push({
+        x: anchorX,
+        y: anchorY + i * SEGMENT_LEN,
+        px: anchorX,          // previous x
+        py: anchorY + i * SEGMENT_LEN,
+        vx: 0,
+        vy: 0
+      });
+    }
+    // Each node gets a letter + color
+    this.letters = Array.from({ length: numNodes }, () => randLetter());
+    this.colors  = Array.from({ length: numNodes }, () => randColor());
+  }
+
+  applyWind(fx, fy) {
+    // Wind force applied per node — stronger toward tip
+    for (let i = 1; i < this.nodes.length; i++) {
+      const t = i / (this.nodes.length - 1); // 0 at top, 1 at bottom
+      const scale = 0.3 + t * 1.4;            // tip gets ~5x the top
+      const n = this.nodes[i];
+      n.vx += fx * scale;
+      n.vy += fy * scale;
+    }
+  }
+
+  step(dt) {
+    const dt2 = dt * dt;
+
+    // Verlet integration for free nodes (node 0 is anchor)
+    for (let i = 1; i < this.nodes.length; i++) {
+      const n = this.nodes[i];
+      const vx = (n.x - n.px) * DAMPING + n.vx * dt;
+      const vy = (n.y - n.py) * DAMPING + n.vy * dt;
+      n.px = n.x;
+      n.py = n.y;
+      n.x += vx + 0 * dt2;
+      n.y += vy + GRAVITY * dt2 * 0.001; // gravity pull down
+      n.vx = 0;
+      n.vy = 0;
+    }
+
+    // Constrain distances (rope-like)
+    for (let iter = 0; iter < CONSTRAINT_ITER; iter++) {
+      // Fix anchor
+      this.nodes[0].x = this.anchorX;
+      this.nodes[0].y = this.anchorY;
+
+      for (let i = 0; i < this.nodes.length - 1; i++) {
+        const a = this.nodes[i];
+        const b = this.nodes[i + 1];
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 0.001;
+        const diff = (dist - SEGMENT_LEN) / dist;
+        if (i === 0) {
+          // Anchor is fixed, push only b
+          b.x -= dx * diff;
+          b.y -= dy * diff;
+        } else {
+          const half = diff * 0.5;
+          a.x += dx * half;
+          a.y += dy * half;
+          b.x -= dx * half;
+          b.y -= dy * half;
+        }
+      }
+    }
+  }
+
+  draw() {
+    const nodes = this.nodes;
+    // Draw line segments first
+    ctx.strokeStyle = '#cccccc';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(nodes[0].x, nodes[0].y);
+    for (let i = 1; i < nodes.length; i++) {
+      ctx.lineTo(nodes[i].x, nodes[i].y);
+    }
+    ctx.stroke();
+
+    // Draw letters
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = `900 ${FONT_SIZE}px "Arial Black", Arial, sans-serif`;
+    for (let i = 0; i < nodes.length; i++) {
+      ctx.fillStyle = this.colors[i];
+      ctx.fillText(this.letters[i], nodes[i].x, nodes[i].y);
+    }
+  }
+}
+
+// ─── Wind controller ───────────────────────────────────────────────────────
+// States: IDLE → BUILDING → BLOWING → DECAYING → REST → …
+const WindState = { IDLE: 0, BUILDING: 1, BLOWING: 2, DECAYING: 3, REST: 4 };
+
+let windState = WindState.IDLE;
+let windTimer = 0;
+let windPhase = 0;        // 0..1 within current state
+let windStrength = 0;     // current magnitude (px/s/s per unit mass)
+let windTargetStrength = 0;
+let windAngle = 0;        // direction in radians
+const WIND_MAX = 2200;
+
+function nextWind() {
+  windState = WindState.BUILDING;
+  windTimer = 0;
+  windAngle = randFloat(-0.3, 0.3);           // mostly horizontal with slight up/down
+  windTargetStrength = randFloat(1200, WIND_MAX);
+}
+
+// ─── Chimes ────────────────────────────────────────────────────────────────
+let chimes = [];
+
+function initChimes() {
+  chimes = [];
+  const count = randInt(5, 7);
+  const margin = W * 0.12;
+  const spacing = (W - margin * 2) / (count - 1);
+  for (let i = 0; i < count; i++) {
+    const x = margin + i * spacing;
+    const numNodes = randInt(4, 6);
+    chimes.push({
+      chain: new Chain(x, BAR_Y, numNodes),
+      delay: i * randFloat(0.08, 0.15)  // stagger left-to-right
+    });
+  }
+}
+
+initChimes();
+
+// ─── Idle micro-sway ───────────────────────────────────────────────────────
+let idleTime = 0;
+function applyIdleSway(dt) {
+  idleTime += dt;
+  for (let ci = 0; ci < chimes.length; ci++) {
+    const { chain, delay } = chimes[ci];
+    // Tiny random impulse occasionally
+    if (Math.random() < 0.005) {
+      chain.applyWind(randFloat(-80, 80), 0);
+    }
+  }
+}
+
+// ─── Main loop ─────────────────────────────────────────────────────────────
+let lastTime = null;
+
+// Wind timing params (seconds)
+const T_BUILD  = () => randFloat(0.4, 0.8);
+const T_BLOW   = () => randFloat(1.0, 1.8);
+const T_DECAY  = () => randFloat(0.5, 1.0);
+const T_REST   = () => randFloat(1.2, 2.5);
+
+let tBuild = 0, tBlow = 0, tDecay = 0, tRest = 0;
+
+// Start first wind after short delay
+windState = WindState.REST;
+windTimer = 0;
+tRest = 0.8;
+
+function loop(ts) {
+  requestAnimationFrame(loop);
+
+  if (!lastTime) { lastTime = ts; return; }
+  const dt = Math.min((ts - lastTime) / 1000, 0.05); // cap at 50ms
+  lastTime = ts;
+
+  // ── Wind state machine ──
+  windTimer += dt;
+
+  switch (windState) {
+    case WindState.REST:
+      if (windTimer >= tRest) {
+        nextWind();
+        tBuild = T_BUILD();
+      }
+      break;
+
+    case WindState.BUILDING:
+      windPhase = Math.min(windTimer / tBuild, 1);
+      windStrength = windPhase * windTargetStrength;
+      if (windTimer >= tBuild) {
+        windState = WindState.BLOWING;
+        windTimer = 0;
+        tBlow = T_BLOW();
+      }
+      break;
+
+    case WindState.BLOWING:
+      // Slight gust variation
+      windStrength = windTargetStrength * (0.85 + 0.15 * Math.sin(windTimer * 6));
+      if (windTimer >= tBlow) {
+        windState = WindState.DECAYING;
+        windTimer = 0;
+        tDecay = T_DECAY();
+      }
+      break;
+
+    case WindState.DECAYING:
+      windPhase = 1 - Math.min(windTimer / tDecay, 1);
+      windStrength = windPhase * windTargetStrength;
+      if (windTimer >= tDecay) {
+        windStrength = 0;
+        windState = WindState.REST;
+        windTimer = 0;
+        tRest = T_REST();
+      }
+      break;
+  }
+
+  // ── Apply wind to chains with stagger ──
+  const windFx = Math.cos(windAngle) * windStrength * dt;
+  const windFy = Math.sin(windAngle) * windStrength * dt * 0.1;
+
+  for (let ci = 0; ci < chimes.length; ci++) {
+    const { chain, delay } = chimes[ci];
+    // Each chain receives wind slightly later
+    const effectiveWind = (windTimer - delay > 0) ? 1 : 0;
+    if (effectiveWind && windStrength > 10) {
+      chain.applyWind(windFx, windFy);
+    }
+  }
+
+  applyIdleSway(dt);
+
+  // ── Step physics ──
+  for (const { chain } of chimes) {
+    chain.step(dt);
+  }
+
+  // ── Draw ──
+  ctx.clearRect(0, 0, W, H);
+
+  // Background
+  ctx.fillStyle = '#f0f0f5';
+  ctx.fillRect(0, 0, W, H);
+
+  // Horizontal bar
+  const barMargin = W * 0.07;
+  ctx.strokeStyle = '#999999';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(barMargin, BAR_Y);
+  ctx.lineTo(W - barMargin, BAR_Y);
+  ctx.stroke();
+
+  // Chimes
+  for (const { chain } of chimes) {
+    chain.draw();
+  }
+}
+
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
