@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sparkler Letters v2</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: #f0f0f5;
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+// Resize
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// Config
+const COLORS = ['#FF8C00', '#4169E1', '#FF1493', '#32CD32', '#ADFF2F', '#FF69B4'];
+const STICK_COLOR = '#FF1493';
+const DOT_COLORS = ['#FF1493', '#4169E1', '#FF8C00', '#32CD32', '#ADFF2F', '#FF69B4'];
+const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+// Stick parameters (percentage-based, computed each frame)
+function getStickPoints() {
+  const W = canvas.width;
+  const H = canvas.height;
+  // Bottom: x=47%, y=95%
+  const x1 = W * 0.47;
+  const y1 = H * 0.95;
+  // Top: x=50%, y=35%
+  const x2 = W * 0.50;
+  const y2 = H * 0.35;
+  return { x1, y1, x2, y2 };
+}
+
+// Pre-generate stick dots (relative positions along stick)
+const stickDots = [];
+(function generateDots() {
+  const count = 15 + Math.floor(Math.random() * 6); // 15-20
+  for (let i = 0; i < count; i++) {
+    stickDots.push({
+      t: Math.random(),           // position along stick 0-1
+      offset: (Math.random() - 0.5) * 8, // slight lateral offset
+      r: 1 + Math.random() * 2,  // radius 1-3 (will render as 2-5px diameter)
+      color: DOT_COLORS[Math.floor(Math.random() * DOT_COLORS.length)]
+    });
+  }
+})();
+
+// Active letters
+const letters = [];
+
+// Spawn control
+let lastSpawn = 0;
+let nextSpawnDelay = 300 + Math.random() * 100;
+
+function spawnLetter(now) {
+  const { x2, y2 } = getStickPoints();
+
+  // Fan: 150 degrees, from left-upper to right-upper
+  // Center direction: straight up (270 deg). Fan ±75 deg around that.
+  const centerAngle = -Math.PI / 2; // upward
+  const spread = (150 * Math.PI) / 180;
+  const angle = centerAngle - spread / 2 + Math.random() * spread;
+
+  // Speed: pixels per second such that it crosses ~viewport in 1.5-2s
+  const diagonal = Math.sqrt(canvas.width ** 2 + canvas.height ** 2);
+  const duration = 1500 + Math.random() * 500; // ms
+  const speed = diagonal / (duration / 1000); // px/s
+
+  const vx = Math.cos(angle) * speed;
+  const vy = Math.sin(angle) * speed;
+
+  const color = COLORS[Math.floor(Math.random() * COLORS.length)];
+  const letter = LETTERS[Math.floor(Math.random() * LETTERS.length)];
+  const fontSize = 30 + Math.floor(Math.random() * 21); // 30-50
+
+  // Small rotation: -5 to +5 deg, nearly static
+  const rot = (Math.random() - 0.5) * (10 * Math.PI / 180);
+
+  // Optional decoration
+  const hasDeco = Math.random() < 0.4;
+  const decoType = Math.random() < 0.5 ? '~' : '◠';
+
+  letters.push({
+    letter,
+    color,
+    fontSize,
+    x: x2,
+    y: y2,
+    vx,
+    vy,
+    rot,
+    startX: x2,
+    startY: y2,
+    born: now,
+    duration,
+    scale: 0,        // starts at 0, pops to 1
+    popDone: false,
+    hasDeco,
+    decoType
+  });
+}
+
+function drawStick() {
+  const { x1, y1, x2, y2 } = getStickPoints();
+
+  // Draw stick
+  ctx.save();
+  ctx.strokeStyle = STICK_COLOR;
+  ctx.lineWidth = 3.5;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+  ctx.restore();
+
+  // Draw dots along stick
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  const nx = -dy / len; // normal vector (perpendicular)
+  const ny = dx / len;
+
+  for (const dot of stickDots) {
+    const px = x1 + dx * dot.t + nx * dot.offset;
+    const py = y1 + dy * dot.t + ny * dot.offset;
+    ctx.save();
+    ctx.fillStyle = dot.color;
+    ctx.beginPath();
+    ctx.arc(px, py, dot.r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+function drawLetters(now) {
+  for (let i = letters.length - 1; i >= 0; i--) {
+    const L = letters[i];
+    const age = now - L.born;
+    const progress = age / L.duration;
+
+    if (progress >= 1) {
+      letters.splice(i, 1);
+      continue;
+    }
+
+    // Update position
+    const dt = (now - (L.lastUpdate || L.born)) / 1000;
+    L.lastUpdate = now;
+    L.x += L.vx * dt;
+    L.y += L.vy * dt;
+
+    // Scale pop: 0 -> 1 in first 100ms
+    if (age < 100) {
+      L.scale = age / 100;
+    } else {
+      L.scale = 1;
+      L.popDone = true;
+    }
+
+    // Fade: starts at age 70% of duration
+    let alpha = 1;
+    if (progress > 0.7) {
+      alpha = 1 - (progress - 0.7) / 0.3;
+    }
+
+    // Trail: straight line from start to current position, 70-80% length
+    const trailFraction = 0.70 + Math.random() * 0.10; // 70-80%, slightly varies
+    const trailEndX = L.x - (L.x - L.startX) * trailFraction;
+    const trailEndY = L.y - (L.y - L.startY) * trailFraction;
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+
+    // Draw trail (straight line from slightly behind current pos toward start)
+    ctx.strokeStyle = L.color;
+    ctx.lineWidth = 1.5 + Math.random() * 0.5;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(L.x, L.y);
+    ctx.lineTo(trailEndX, trailEndY);
+    ctx.stroke();
+
+    // Draw letter
+    ctx.translate(L.x, L.y);
+    ctx.rotate(L.rot);
+    ctx.scale(L.scale, L.scale);
+
+    ctx.font = `700 ${L.fontSize}px Arial, sans-serif`;
+    ctx.fillStyle = L.color;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(L.letter, 0, 0);
+
+    // Decoration
+    if (L.hasDeco) {
+      ctx.font = `700 ${Math.floor(L.fontSize * 0.5)}px Arial, sans-serif`;
+      ctx.fillText(L.decoType, L.fontSize * 0.7, -L.fontSize * 0.5);
+    }
+
+    ctx.restore();
+  }
+}
+
+let lastTime = 0;
+
+function loop(now) {
+  // Clear
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Background
+  ctx.fillStyle = '#f0f0f5';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Spawn new letter
+  if (now - lastSpawn >= nextSpawnDelay) {
+    // Keep max 8 on screen
+    if (letters.length < 8) {
+      spawnLetter(now);
+      lastSpawn = now;
+      nextSpawnDelay = 300 + Math.random() * 100;
+    }
+  }
+
+  // Draw
+  drawStick();
+  drawLetters(now);
+
+  lastTime = now;
+  requestAnimationFrame(loop);
+}
+
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

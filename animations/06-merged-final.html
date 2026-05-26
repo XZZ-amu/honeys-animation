@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sparkler Letters - Merged Final</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #f0f0f5;
+      overflow: hidden;
+      width: 100vw;
+      height: 100vh;
+    }
+    canvas {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<script>
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+
+  window.addEventListener('resize', () => {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    initDots();
+  });
+
+  // Letter colors from reference — uppercase only
+  const colors = [
+    '#FF8C00', // orange
+    '#4169E1', // royal blue
+    '#FF1493', // deep pink
+    '#32CD32', // lime green
+    '#ADFF2F', // yellow-green
+  ];
+
+  const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+  // ---- Decorative dots on the stick ----
+  let stickDots = [];
+
+  function initDots() {
+    stickDots = [];
+    const dotColors = ['#FF8C00', '#4169E1', '#FF1493', '#32CD32', '#ADFF2F', '#FF6347', '#00BFFF', '#FFD700'];
+    const count = 15 + Math.floor(Math.random() * 6); // 15-20
+    for (let i = 0; i < count; i++) {
+      // scatter along stick body: t=0 is tip, t=1 is base
+      const t = 0.05 + Math.random() * 0.88;
+      stickDots.push({
+        t,
+        offset: (Math.random() - 0.5) * 10, // perpendicular offset ±5px
+        size: 2 + Math.random() * 3,         // 2-5px
+        color: dotColors[Math.floor(Math.random() * dotColors.length)],
+      });
+    }
+  }
+  initDots();
+
+  // ---- Stick geometry ----
+  function getStickGeometry() {
+    const w = canvas.width;
+    const h = canvas.height;
+    // Base at bottom center, slightly left
+    const baseX = w * 0.47;
+    const baseY = h * 1.02; // slightly below canvas bottom
+    // Tip at 38% height, near center
+    const tipX = w * 0.50;
+    const tipY = h * 0.38;
+    return { baseX, baseY, tipX, tipY };
+  }
+
+  // ---- Particles ----
+  let particles = [];
+  let lastSpawnTime = 0;
+  const SPAWN_INTERVAL = 15; // ms — locked from v2
+
+  function randomLetter() {
+    return letters[Math.floor(Math.random() * letters.length)];
+  }
+
+  function randomColor() {
+    return colors[Math.floor(Math.random() * colors.length)];
+  }
+
+  function spawnParticle(cx, cy) {
+    const baseAngle = -Math.PI / 2; // straight up
+    const spread = (Math.PI * 100) / 180; // ±100°
+    const angle = baseAngle + (Math.random() - 0.5) * spread * 2;
+
+    const speed = 2.5 + Math.random() * 5.5; // locked from v2
+    const vx = Math.cos(angle) * speed;
+    const vy = Math.sin(angle) * speed;
+
+    const jitter = 5;
+    const x = cx + (Math.random() - 0.5) * jitter;
+    const y = cy + (Math.random() - 0.5) * jitter;
+
+    const maxLife = 18 + Math.random() * 14; // 18-32 frames, locked from v2
+
+    const color = randomColor();
+
+    particles.push({
+      x,
+      y,
+      spawnX: cx, // trail start point (fixed at spawn)
+      spawnY: cy,
+      vx,
+      vy,
+      letter: randomLetter(),
+      color,
+      size: 8 + Math.random() * 8, // 8-16px, locked from v2
+      alpha: 1,
+      life: 0,
+      maxLife,
+    });
+  }
+
+  // ---- Draw stick ----
+  function drawStick(tipX, tipY, baseX, baseY) {
+    ctx.save();
+
+    // Perpendicular direction for dot offset
+    const dx = baseX - tipX;
+    const dy = baseY - tipY;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    const nx = -dy / len; // perpendicular unit vector
+    const ny = dx / len;
+
+    // Main stick body — bright pink, 3-4px
+    ctx.beginPath();
+    ctx.moveTo(tipX, tipY);
+    ctx.lineTo(baseX, baseY);
+    ctx.strokeStyle = '#FF1493';
+    ctx.lineWidth = 3.5;
+    ctx.lineCap = 'round';
+    ctx.stroke();
+
+    // Scatter dots along stick
+    for (const dot of stickDots) {
+      const px = tipX + (baseX - tipX) * dot.t + nx * dot.offset;
+      const py = tipY + (baseY - tipY) * dot.t + ny * dot.offset;
+      ctx.beginPath();
+      ctx.arc(px, py, dot.size / 2, 0, Math.PI * 2);
+      ctx.fillStyle = dot.color;
+      ctx.fill();
+    }
+
+    ctx.restore();
+  }
+
+  // ---- Animation loop ----
+  let lastTime = 0;
+
+  function animate(timestamp) {
+    requestAnimationFrame(animate);
+
+    const { baseX, baseY, tipX, tipY } = getStickGeometry();
+
+    // Clear with background color
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#f0f0f5';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Draw stick (behind particles)
+    drawStick(tipX, tipY, baseX, baseY);
+
+    // Spawn particles — 2-4 per interval
+    if (timestamp - lastSpawnTime > SPAWN_INTERVAL) {
+      const count = 2 + Math.floor(Math.random() * 3);
+      for (let i = 0; i < count; i++) {
+        spawnParticle(tipX, tipY);
+      }
+      lastSpawnTime = timestamp;
+    }
+
+    // Update and draw particles
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.life++;
+
+      const progress = p.life / p.maxLife;
+
+      // Fast fade: brighten for first 15%, then quick quadratic fade
+      if (progress < 0.15) {
+        p.alpha = progress / 0.15;
+      } else {
+        const t = (progress - 0.15) / 0.85;
+        p.alpha = 1 - t * t;
+      }
+
+      // Physics — locked from v2
+      p.vy += 0.06; // gravity
+      p.vx *= 0.992; // slight air resistance
+      p.vy *= 0.992;
+
+      p.x += p.vx;
+      p.y += p.vy;
+
+      if (p.life >= p.maxLife) {
+        particles.splice(i, 1);
+        continue;
+      }
+
+      const a = Math.max(0, p.alpha);
+
+      // Draw trail: straight line from spawn point to current position
+      ctx.save();
+      ctx.globalAlpha = a * 0.7;
+      ctx.beginPath();
+      ctx.moveTo(p.spawnX, p.spawnY);
+      ctx.lineTo(p.x, p.y);
+      ctx.strokeStyle = p.color;
+      ctx.lineWidth = 1.5;
+      ctx.lineCap = 'round';
+      // No shadow/blur
+      ctx.stroke();
+      ctx.restore();
+
+      // Draw letter (no rotation — clean and sharp)
+      const currentSize = p.size * (1 - progress * 0.85);
+      ctx.save();
+      ctx.globalAlpha = a;
+      ctx.translate(p.x, p.y);
+      ctx.font = `bold ${Math.max(1, currentSize)}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = p.color;
+      // No shadowBlur, no glow
+      ctx.fillText(p.letter, 0, 0);
+      ctx.restore();
+    }
+  }
+
+  requestAnimationFrame(animate);
+</script>
+</body>
+</html>

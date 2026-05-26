@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sparkler Letters v3</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #f0f0f5;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+  }
+  canvas {
+    display: block;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+const W = canvas.width;
+const H = canvas.height;
+
+// Sparkler geometry
+const stickBaseX = W * 0.45;
+const stickBaseY = H;
+const stickLength = H * 0.60;
+const stickAngle = -Math.PI / 2 + 0.06; // nearly vertical, slight tilt right
+const tipX = stickBaseX + Math.cos(stickAngle) * stickLength;
+const tipY = stickBaseY + Math.sin(stickAngle) * stickLength;
+
+// Letter colors
+const COLORS = ['#FF8C00', '#4169E1', '#FF1493', '#32CD32', '#ADFF2F'];
+const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+
+// Sparkle dots on stick
+const stickDots = [];
+for (let i = 0; i < 18; i++) {
+  const t = Math.random() * 0.85 + 0.1; // along stick
+  stickDots.push({
+    t,
+    x: stickBaseX + Math.cos(stickAngle) * stickLength * t,
+    y: stickBaseY + Math.sin(stickAngle) * stickLength * t,
+    r: 1.5 + Math.random() * 2.5,
+    color: COLORS[Math.floor(Math.random() * COLORS.length)],
+    phase: Math.random() * Math.PI * 2,
+    speed: 0.8 + Math.random() * 1.2
+  });
+}
+
+// Active letter particles
+const particles = [];
+
+// Timing
+let lastSpawn = 0;
+const SPAWN_INTERVAL_MIN = 80;
+const SPAWN_INTERVAL_MAX = 120;
+let nextSpawnInterval = SPAWN_INTERVAL_MIN + Math.random() * (SPAWN_INTERVAL_MAX - SPAWN_INTERVAL_MIN);
+let usedLetters = [];
+
+function getNextLetter() {
+  if (usedLetters.length >= LETTERS.length) usedLetters = [];
+  const available = LETTERS.filter(l => !usedLetters.includes(l));
+  const l = available[Math.floor(Math.random() * available.length)];
+  usedLetters.push(l);
+  return l;
+}
+
+function spawnParticle() {
+  // Fan angle: centered ~straight up (stickAngle - 90deg), spread 120-150 deg
+  const fanCenter = stickAngle - Math.PI / 2; // pointing up from stick tip
+  const fanSpread = (Math.PI * 140) / 180; // 140 degrees
+  const angle = fanCenter - fanSpread / 2 + Math.random() * fanSpread;
+
+  // Speed: initial fast, short distance
+  // Max travel = stickLength * 0.25
+  const maxDist = stickLength * 0.25;
+  const speed = 2.5 + Math.random() * 2.0; // px/frame at 60fps, will decelerate
+
+  const lifespan = 0.3 + Math.random() * 0.3; // seconds
+  const color = COLORS[Math.floor(Math.random() * COLORS.length)];
+  const letter = getNextLetter();
+
+  particles.push({
+    x: tipX,
+    y: tipY,
+    vx: Math.cos(angle) * speed,
+    vy: Math.sin(angle) * speed,
+    color,
+    letter,
+    born: performance.now(),
+    lifespan: lifespan * 1000, // ms
+    prevX: tipX,
+    prevY: tipY,
+    alpha: 1.0,
+    size: 30 + Math.floor(Math.random() * 20)
+  });
+}
+
+function drawStick() {
+  // Stick body - bright pink, thick
+  ctx.save();
+  ctx.strokeStyle = '#FF1493';
+  ctx.lineWidth = 5;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(stickBaseX, stickBaseY);
+  ctx.lineTo(tipX, tipY);
+  ctx.stroke();
+
+  // Handle grip area - slightly darker/thicker at base
+  ctx.strokeStyle = '#CC0077';
+  ctx.lineWidth = 7;
+  ctx.beginPath();
+  ctx.moveTo(stickBaseX, stickBaseY);
+  ctx.lineTo(stickBaseX + Math.cos(stickAngle) * stickLength * 0.25, stickBaseY + Math.sin(stickAngle) * stickLength * 0.25);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function drawStickDots(time) {
+  stickDots.forEach(dot => {
+    const pulse = 0.5 + 0.5 * Math.sin(time * dot.speed * 0.003 + dot.phase);
+    const alpha = 0.5 + 0.5 * pulse;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = dot.color;
+    ctx.beginPath();
+    ctx.arc(dot.x, dot.y, dot.r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  });
+}
+
+function drawParticles(time) {
+  particles.forEach(p => {
+    const age = time - p.born;
+    const progress = age / p.lifespan;
+    p.alpha = Math.max(0, 1 - progress);
+
+    if (p.alpha <= 0) return;
+
+    // Deceleration: velocity reduces over time
+    const decay = Math.pow(0.88, 1); // per frame decay applied in update
+    const fontSize = p.size;
+
+    ctx.save();
+    ctx.globalAlpha = p.alpha;
+
+    // Trail line from prev to current
+    ctx.strokeStyle = p.color;
+    ctx.lineWidth = 1.8;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(p.prevX, p.prevY);
+    ctx.lineTo(p.x, p.y);
+    ctx.stroke();
+
+    // Letter
+    ctx.fillStyle = p.color;
+    ctx.font = `bold ${fontSize}px Arial, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(p.letter, p.x, p.y);
+
+    ctx.restore();
+  });
+}
+
+function updateParticles(dt) {
+  const gravity = 0.12; // px/frame^2 equivalent, gentle
+  const FRAME = 1000 / 60;
+  const frames = dt / FRAME;
+
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    const age = performance.now() - p.born;
+
+    if (age >= p.lifespan) {
+      particles.splice(i, 1);
+      continue;
+    }
+
+    p.prevX = p.x;
+    p.prevY = p.y;
+
+    // Apply deceleration (exponential falloff)
+    const decel = Math.pow(0.88, frames);
+    p.vx *= decel;
+    p.vy *= decel;
+
+    // Gravity (adds to y velocity, pulling down)
+    p.vy += gravity * frames;
+
+    p.x += p.vx * frames;
+    p.y += p.vy * frames;
+  }
+}
+
+let lastTime = 0;
+
+function loop(time) {
+  const dt = lastTime ? Math.min(time - lastTime, 50) : 16;
+  lastTime = time;
+
+  // Clear
+  ctx.clearRect(0, 0, W, H);
+
+  // Background
+  ctx.fillStyle = '#f0f0f5';
+  ctx.fillRect(0, 0, W, H);
+
+  // Draw stick
+  drawStick();
+
+  // Draw stick decorative dots
+  drawStickDots(time);
+
+  // Update particles
+  updateParticles(dt);
+
+  // Spawn new particles
+  if (time - lastSpawn >= nextSpawnInterval) {
+    spawnParticle();
+    lastSpawn = time;
+    nextSpawnInterval = SPAWN_INTERVAL_MIN + Math.random() * (SPAWN_INTERVAL_MAX - SPAWN_INTERVAL_MIN);
+  }
+
+  // Draw particles
+  drawParticles(time);
+
+  requestAnimationFrame(loop);
+}
+
+requestAnimationFrame(loop);
+
+// Handle resize
+window.addEventListener('resize', () => {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+});
+</script>
+</body>
+</html>
