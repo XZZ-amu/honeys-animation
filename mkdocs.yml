@@ -35,7 +35,9 @@ markdown_extensions:
 nav:
 - 首页: index.md
 - 参考资料:
-  - Claude Code Harness 拆解：5 阶段参照: reference-claude-code-harness.md
-  - ComfyUI Harness 拆解：创作类 Agent 参照: reference-creative-agent-harness.md
+  - Claude Code Harness 拆解: reference-claude-code-harness.md
+  - 创作类 Agent 难题与解法: reference-creative-agent-harness.md
 - 调研:
   - 创作类 AI Agent 开源项目调研: research-creative-agents.md
+- 设计决策:
+  - 01 意图澄清机制: decisions/01-intent-clarification.md

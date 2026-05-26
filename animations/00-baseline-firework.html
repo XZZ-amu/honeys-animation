@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Letter Fireworks</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: #0a0a0f;
+      overflow: hidden;
+      width: 100vw;
+      height: 100vh;
+      font-family: 'Courier New', monospace;
+    }
+
+    canvas {
+      display: block;
+    }
+
+    #hint {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: rgba(255, 255, 255, 0.25);
+      font-size: 13px;
+      font-family: sans-serif;
+      pointer-events: none;
+      letter-spacing: 0.05em;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div id="hint">click anywhere · auto-launches every few seconds</div>
+
+  <script>
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d');
+
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    window.addEventListener('resize', () => {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    });
+
+    // ── palette ──────────────────────────────────────────────
+    const PALETTES = [
+      ['#FF6B9D','#FF8E53','#FFC857','#A8FF78','#78FECF'],
+      ['#FF4E50','#FC913A','#F9D62E','#E2F4C7','#A2CDCD'],
+      ['#F64F59','#C471ED','#12C2E9','#F7971E','#FFD200'],
+      ['#FDDB92','#D1FDFF','#A8EDEA','#FED6E3','#E0C3FC'],
+      ['#FF9A9E','#FAD0C4','#FEF9D7','#D4FC79','#96E6A1'],
+      ['#43E97B','#38F9D7','#4FACFE','#00F2FE','#F5AF19'],
+    ];
+
+    const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789@#$%&*!?';
+
+    function rand(min, max) { return Math.random() * (max - min) + min; }
+    function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+    // ── sparkle trail (仙女棒上升轨迹) ────────────────────────
+    class Trail {
+      constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.vx = rand(-0.6, 0.6);
+        this.vy = rand(-18, -14);          // 快速向上
+        this.gravity = 0.45;
+        this.life = 1;
+        this.decay = rand(0.008, 0.014);
+        this.size = rand(2, 4);
+        this.color = '#ffffff';
+      }
+      update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.vy += this.gravity;
+        this.life -= this.decay;
+      }
+      draw() {
+        ctx.save();
+        ctx.globalAlpha = this.life * 0.7;
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.size * this.life, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+      get dead() { return this.life <= 0 || this.y > canvas.height + 20; }
+    }
+
+    // ── letter particle (爆炸字母) ─────────────────────────────
+    class LetterParticle {
+      constructor(x, y, palette) {
+        this.x = x;
+        this.y = y;
+        const angle = rand(0, Math.PI * 2);
+        const speed = rand(1.5, 9);
+        this.vx = Math.cos(angle) * speed;
+        this.vy = Math.sin(angle) * speed;
+        this.gravity = rand(0.08, 0.20);
+        this.drag = rand(0.96, 0.99);
+        this.life = 1;
+        this.decay = rand(0.012, 0.022);
+        this.letter = pick(LETTERS);
+        this.color = pick(palette);
+        this.fontSize = rand(10, 22);
+        this.rotation = rand(-Math.PI, Math.PI);
+        this.rotSpeed = rand(-0.08, 0.08);
+        // 闪烁
+        this.twinkle = Math.random() > 0.6;
+        this.twinkleRate = rand(0.05, 0.15);
+        this.twinklePhase = rand(0, Math.PI * 2);
+      }
+      update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.vy += this.gravity;
+        this.vx *= this.drag;
+        this.vy *= this.drag;
+        this.life -= this.decay;
+        this.rotation += this.rotSpeed;
+        this.twinklePhase += this.twinkleRate;
+      }
+      draw() {
+        let alpha = Math.max(0, this.life);
+        if (this.twinkle) {
+          alpha *= 0.5 + 0.5 * Math.abs(Math.sin(this.twinklePhase));
+        }
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.rotation);
+        ctx.font = `bold ${this.fontSize}px 'Courier New', monospace`;
+        ctx.fillStyle = this.color;
+        ctx.shadowColor = this.color;
+        ctx.shadowBlur = 8;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(this.letter, 0, 0);
+        ctx.restore();
+      }
+      get dead() { return this.life <= 0; }
+    }
+
+    // ── rocket (仙女棒本身) ────────────────────────────────────
+    class Rocket {
+      constructor(x) {
+        this.x = x;
+        this.y = canvas.height + 10;
+        this.vy = rand(-16, -13);
+        this.gravity = 0.35;
+        this.targetY = rand(canvas.height * 0.12, canvas.height * 0.5);
+        this.trailTimer = 0;
+        this.exploded = false;
+        this.palette = pick(PALETTES);
+        // 仙女棒摆动
+        this.vx = rand(-1.2, 1.2);
+        this.drag = 0.995;
+      }
+
+      update(trails) {
+        this.x += this.vx;
+        this.vx *= this.drag;
+        this.y += this.vy;
+        this.vy += this.gravity;
+
+        // 每隔几帧留一个尾迹粒子
+        this.trailTimer++;
+        if (this.trailTimer % 2 === 0) {
+          const t = new Trail(this.x, this.y);
+          t.color = pick(this.palette);
+          trails.push(t);
+        }
+
+        if (this.vy >= -1 || this.y <= this.targetY) {
+          this.exploded = true;
+        }
+      }
+
+      explode(letters) {
+        // 两层爆炸：内层密集短程 + 外层稀疏长程
+        const count = Math.floor(rand(60, 120));
+        for (let i = 0; i < count; i++) {
+          letters.push(new LetterParticle(this.x, this.y, this.palette));
+        }
+        // 次爆炸（延迟感用更慢速度）
+        const sub = Math.floor(rand(15, 30));
+        for (let i = 0; i < sub; i++) {
+          const p = new LetterParticle(this.x, this.y, this.palette);
+          p.vx *= 0.4;
+          p.vy *= 0.4;
+          p.decay *= 0.6;
+          p.fontSize *= 1.3;
+          letters.push(p);
+        }
+      }
+
+      draw() {
+        ctx.save();
+        ctx.globalAlpha = 0.95;
+        ctx.fillStyle = '#ffffff';
+        ctx.shadowColor = '#ffffff';
+        ctx.shadowBlur = 12;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      get dead() { return this.exploded; }
+    }
+
+    // ── 场景状态 ──────────────────────────────────────────────
+    let rockets = [];
+    let trails = [];
+    let letters = [];
+    let autoTimer = 0;
+    let autoInterval = rand(60, 110);   // frames between auto-launches
+
+    function launchRocket(x) {
+      if (x === undefined) x = rand(canvas.width * 0.1, canvas.width * 0.9);
+      rockets.push(new Rocket(x));
+      // 偶尔同时发两枚
+      if (Math.random() > 0.65) {
+        setTimeout(() => {
+          rockets.push(new Rocket(rand(canvas.width * 0.1, canvas.width * 0.9)));
+        }, rand(100, 400));
+      }
+    }
+
+    canvas.addEventListener('click', (e) => {
+      launchRocket(e.clientX);
+    });
+
+    // ── 主循环 ────────────────────────────────────────────────
+    function loop() {
+      // 拖影效果：半透明黑色覆盖，不是 clearRect
+      ctx.fillStyle = 'rgba(10, 10, 15, 0.18)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // 自动发射
+      autoTimer++;
+      if (autoTimer >= autoInterval) {
+        autoTimer = 0;
+        autoInterval = rand(60, 130);
+        launchRocket();
+      }
+
+      // 更新 & 绘制 trails
+      for (let i = trails.length - 1; i >= 0; i--) {
+        trails[i].update();
+        trails[i].draw();
+        if (trails[i].dead) trails.splice(i, 1);
+      }
+
+      // 更新 & 绘制 rockets
+      for (let i = rockets.length - 1; i >= 0; i--) {
+        const r = rockets[i];
+        r.update(trails);
+        r.draw();
+        if (r.dead) {
+          r.explode(letters);
+          rockets.splice(i, 1);
+        }
+      }
+
+      // 更新 & 绘制 letter particles
+      for (let i = letters.length - 1; i >= 0; i--) {
+        letters[i].update();
+        letters[i].draw();
+        if (letters[i].dead) letters.splice(i, 1);
+      }
+
+      requestAnimationFrame(loop);
+    }
+
+    // 开场立刻发两枚
+    launchRocket(canvas.width * 0.35);
+    setTimeout(() => launchRocket(canvas.width * 0.65), 500);
+
+    loop();
+  </script>
+</body>
+</html>
