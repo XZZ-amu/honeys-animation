@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>粒子预设测试台</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #f0f0f5;
+      overflow: hidden;
+      width: 100vw;
+      height: 100vh;
+      font-family: system-ui, -apple-system, sans-serif;
+    }
+    canvas { display: block; }
+
+    /* ── 左上角下拉框 ── */
+    #controls {
+      position: fixed;
+      top: 16px;
+      left: 16px;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    #preset-select {
+      appearance: none;
+      background: rgba(255,255,255,0.85);
+      border: 1px solid rgba(0,0,0,0.15);
+      border-radius: 8px;
+      padding: 8px 32px 8px 12px;
+      font-size: 14px;
+      font-weight: 500;
+      color: #222;
+      cursor: pointer;
+      outline: none;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23666' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 10px center;
+      min-width: 160px;
+    }
+    #preset-select:hover { background-color: rgba(255,255,255,0.95); }
+    #preset-note {
+      background: rgba(255,255,255,0.7);
+      border-radius: 8px;
+      padding: 7px 12px;
+      font-size: 13px;
+      color: #555;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+      max-width: 300px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* ── 右侧调参面板 ── */
+    #panel {
+      position: fixed;
+      top: 0;
+      right: 0;
+      width: 260px;
+      height: 100vh;
+      background: rgba(20,20,30,0.88);
+      color: #fff;
+      padding: 16px 14px 16px 16px;
+      overflow-y: auto;
+      transition: transform 0.3s;
+      z-index: 100;
+      font-size: 12px;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+    #panel.collapsed { transform: translateX(240px); }
+
+    #toggle-btn {
+      position: fixed;
+      top: 12px;
+      right: 264px;
+      width: 28px;
+      height: 28px;
+      background: rgba(20,20,30,0.88);
+      color: #fff;
+      border: none;
+      border-radius: 4px 0 0 4px;
+      cursor: pointer;
+      font-size: 16px;
+      z-index: 101;
+      transition: right 0.3s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+    }
+    #panel.collapsed + #toggle-btn { right: 24px; }
+
+    .group {
+      margin: 14px 0 6px;
+      color: rgba(255,255,255,0.35);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .group:first-child { margin-top: 0; }
+    .row { margin-bottom: 9px; }
+    .row label {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 4px;
+      line-height: 1.3;
+    }
+    .row label span:first-child { color: rgba(255,255,255,0.85); }
+    .row label span:last-child {
+      color: rgba(255,255,255,0.45);
+      font-variant-numeric: tabular-nums;
+      min-width: 52px;
+      text-align: right;
+    }
+    input[type=range] {
+      width: 100%;
+      height: 4px;
+      -webkit-appearance: none;
+      background: rgba(255,255,255,0.15);
+      border-radius: 2px;
+      outline: none;
+      cursor: pointer;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 13px;
+      height: 13px;
+      background: #fff;
+      border-radius: 50%;
+      cursor: pointer;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+    }
+    input[type=range]::-webkit-slider-thumb:hover { background: #e0e0ff; }
+
+    /* burst-only rows hidden by default */
+    .burst-only { display: none; }
+
+    #copy-btn {
+      display: block;
+      width: 100%;
+      margin-top: 16px;
+      padding: 9px 0;
+      background: rgba(255,255,255,0.1);
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 6px;
+      color: rgba(255,255,255,0.8);
+      font-size: 12px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    #copy-btn:hover { background: rgba(255,255,255,0.18); }
+    #copy-btn:active { background: rgba(255,255,255,0.08); }
+  </style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+
+<!-- 左上角下拉 -->
+<div id="controls">
+  <select id="preset-select"></select>
+  <div id="preset-note"></div>
+</div>
+
+<!-- 右侧面板 -->
+<div id="panel">
+  <div class="group">粒子</div>
+  <div class="row">
+    <label><span>字母大小</span><span id="v-size">12 px</span></label>
+    <input type="range" id="s-size" min="6" max="40" step="1" value="12">
+  </div>
+  <div class="row">
+    <label><span>存活时间</span><span id="v-lifetime">0.5 s</span></label>
+    <input type="range" id="s-lifetime" min="0.1" max="10" step="0.1" value="0.5">
+  </div>
+
+  <div class="group">物理</div>
+  <div class="row">
+    <label><span>飞行速度</span><span id="v-speed">300 px/s</span></label>
+    <input type="range" id="s-speed" min="0" max="2000" step="10" value="300">
+  </div>
+  <div class="row">
+    <label><span>重力</span><span id="v-gravity">200 px/s²</span></label>
+    <input type="range" id="s-gravity" min="-500" max="1000" step="10" value="200">
+  </div>
+  <div class="row">
+    <label><span>阻力</span><span id="v-drag">0.96</span></label>
+    <input type="range" id="s-drag" min="0.90" max="1.0" step="0.001" value="0.96">
+  </div>
+
+  <div class="group">发射</div>
+  <div class="row">
+    <label><span>散开角度</span><span id="v-spread">200°</span></label>
+    <input type="range" id="s-spread" min="0" max="360" step="5" value="200">
+  </div>
+  <div class="row" id="row-emitrate">
+    <label><span>发射频率</span><span id="v-emitrate">50 个/s</span></label>
+    <input type="range" id="s-emitrate" min="1" max="100" step="1" value="50">
+  </div>
+  <div class="row burst-only" id="row-burst">
+    <label><span>爆发数量</span><span id="v-burst">60 个</span></label>
+    <input type="range" id="s-burst" min="5" max="150" step="5" value="60">
+  </div>
+
+  <div class="group">运动</div>
+  <div class="row">
+    <label><span>横向摆幅</span><span id="v-sway">20 px</span></label>
+    <input type="range" id="s-sway" min="0" max="60" step="1" value="20">
+  </div>
+
+  <div class="group">视觉</div>
+  <div class="row">
+    <label><span>尾迹粗细</span><span id="v-trail">0 px</span></label>
+    <input type="range" id="s-trail" min="0" max="4" step="0.1" value="0">
+  </div>
+
+  <button id="copy-btn">复制参数（JSON）</button>
+</div>
+<button id="toggle-btn">‹</button>
+
+<script>
+// ─── Preset data ───────────────────────────────────────────────────────────
+const PRESETS = {
+  "sparkler":   { "name": "仙女棒火花",  "lifetime": [0.25, 0.5],  "speed": [150, 500],  "gravity": [200, 400], "drag": [0.95, 0.97],  "spread": 200, "emitRate": [60, 100], "sizeDecay": 0.3, "alphaEnd": 0 },
+  "snow":       { "name": "雪花飘落",    "lifetime": [4, 8],        "speed": [20, 60],    "gravity": [30, 80],   "drag": [0.99, 0.995], "spread": 30,  "emitRate": [10, 30],  "sizeDecay": 1.0, "alphaEnd": 0,   "sway": { "amplitude": [10, 30], "frequency": [0.5, 1.5] } },
+  "explosion":  { "name": "爆炸",        "lifetime": [0.3, 0.8],   "speed": [400, 1000], "gravity": [0, 100],   "drag": [0.92, 0.96],  "spread": 360, "emitRate": "burst",   "burstCount": [30, 80],  "sizeDecay": 0.2, "alphaEnd": 0 },
+  "flame":      { "name": "火焰",        "lifetime": [0.5, 1.2],   "speed": [80, 200],   "gravity": [-100,-200],"drag": [0.96, 0.98],  "spread": 30,  "emitRate": [30, 60],  "sizeDecay": 0.5, "alphaEnd": 0 },
+  "smoke":      { "name": "烟雾",        "lifetime": [2, 5],        "speed": [20, 80],    "gravity": [-20, -60], "drag": [0.98, 0.995], "spread": 45,  "emitRate": [5, 15],   "sizeDecay": 2.0, "alphaEnd": 0 },
+  "rain":       { "name": "雨",          "lifetime": [0.5, 1.5],   "speed": [400, 800],  "gravity": [600,1000], "drag": [0.99, 1.0],   "spread": 5,   "emitRate": [30, 80],  "sizeDecay": 1.0, "alphaEnd": 0.3 },
+  "fountain":   { "name": "喷泉",        "lifetime": [1, 2.5],     "speed": [200, 500],  "gravity": [300, 500], "drag": [0.98, 0.99],  "spread": 40,  "emitRate": [20, 50],  "sizeDecay": 0.8, "alphaEnd": 0 },
+  "bubbles":    { "name": "气泡上浮",    "lifetime": [3, 7],        "speed": [30, 80],    "gravity": [-40,-100], "drag": [0.99, 0.995], "spread": 20,  "emitRate": [3, 10],   "sizeDecay": 1.2, "alphaEnd": 0,   "sway": { "amplitude": [5, 15],  "frequency": [0.3, 0.8] } },
+  "fireworks":  { "name": "烟花",        "lifetime": [1, 2],        "speed": [200, 600],  "gravity": [150, 300], "drag": [0.96, 0.98],  "spread": 360, "emitRate": "burst",   "burstCount": [40, 100], "sizeDecay": 0.4, "alphaEnd": 0 },
+  "confetti":   { "name": "五彩纸屑",    "lifetime": [2, 5],        "speed": [100, 300],  "gravity": [100, 200], "drag": [0.97, 0.99],  "spread": 120, "emitRate": [20, 50],  "sizeDecay": 1.0, "alphaEnd": 0.5, "sway": { "amplitude": [20, 50], "frequency": [1, 3] }, "rotation": true },
+  "firefly":    { "name": "萤火虫",      "lifetime": [3, 8],        "speed": [10, 40],    "gravity": [0, 0],     "drag": [0.98, 0.99],  "spread": 360, "emitRate": [2, 8],    "sizeDecay": 1.0, "alphaEnd": 0,   "sway": { "amplitude": [15, 40], "frequency": [0.2, 0.6] } },
+  "stars":      { "name": "星空闪烁",    "lifetime": [2, 6],        "speed": [0, 0],      "gravity": [0, 0],     "drag": [1, 1],        "spread": 0,   "emitRate": [5, 15],   "sizeDecay": 1.0, "alphaEnd": 0 },
+  "hyperspace": { "name": "超空间/星轨", "lifetime": [0.5, 1.5],   "speed": [500, 2000], "gravity": [0, 0],     "drag": [1, 1],        "spread": 5,   "emitRate": [30, 80],  "sizeDecay": 0.5, "alphaEnd": 0,   "radial": true },
+  "leaves":     { "name": "落叶",        "lifetime": [3, 7],        "speed": [30, 80],    "gravity": [40, 100],  "drag": [0.98, 0.99],  "spread": 60,  "emitRate": [3, 10],   "sizeDecay": 1.0, "alphaEnd": 0.3, "sway": { "amplitude": [30, 60], "frequency": [0.3, 0.8] }, "rotation": true },
+  "dust_motes": { "name": "发光尘埃",    "lifetime": [4, 10],       "speed": [5, 25],     "gravity": [-10, -30], "drag": [0.995,0.999], "spread": 360, "emitRate": [3, 8],    "sizeDecay": 1.0, "alphaEnd": 0,   "sway": { "amplitude": [5, 15],  "frequency": [0.1, 0.4] } }
+};
+
+const PRESET_NOTES = {
+  sparkler:   "短命快速粒子，强烈向下重力，模拟火花飞溅",
+  snow:       "长寿命低速，轻重力，横向摆动模拟雪花漂移",
+  explosion:  "瞬间爆发大量粒子，360° 扩散，强速快消",
+  flame:      "负重力（向上）+ 扇形扩散，模拟火焰上升",
+  smoke:      "极低速，缓慢上升，尺寸增大模拟烟雾膨胀",
+  rain:       "向下强重力，窄扩散角度，长条形轨迹",
+  fountain:   "向上喷射后抛物线坠落，经典喷泉弧线",
+  bubbles:    "向上浮力 + 横向摆动，气泡透明感",
+  fireworks:  "瞬发 360° 爆散，中等重力弧线坠落",
+  confetti:   "旋转 + 摆动，宽扩散角，持久漂浮",
+  firefly:    "极慢速，随机游走，自然闪烁感",
+  stars:      "原地出现后闪烁消失，静态星空感",
+  hyperspace: "从中心向外高速辐射，星轨拉伸效果",
+  leaves:     "旋转 + 大幅摆动，不规则飘落",
+  dust_motes: "超慢速上浮，细微摆动，空气尘埃感"
+};
+
+// ─── Color palette ────────────────────────────────────────────────────────
+const COLORS  = ['#FF8C00', '#4169E1', '#FF1493', '#32CD32', '#ADFF2F'];
+const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+// ─── Canvas setup ─────────────────────────────────────────────────────────
+const canvas = document.getElementById('canvas');
+const ctx    = canvas.getContext('2d');
+let W = canvas.width  = window.innerWidth;
+let H = canvas.height = window.innerHeight;
+window.addEventListener('resize', () => {
+  W = canvas.width  = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+});
+
+// ─── Helpers ──────────────────────────────────────────────────────────────
+const rand  = (a, b) => a + Math.random() * (b - a);
+const randi = (a, b) => Math.floor(rand(a, b + 1));
+const pick  = arr => arr[Math.floor(Math.random() * arr.length)];
+const lerp  = (a, b, t) => a + (b - a) * t;
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const mid   = (r) => Array.isArray(r) ? (r[0] + r[1]) / 2 : r;
+
+// ─── Live override params (set by sliders) ────────────────────────────────
+// These are single values that replace range-based randomness when set.
+const P = {
+  size:     12,
+  lifetime: 0.5,
+  speed:    300,
+  gravity:  200,
+  drag:     0.96,
+  spread:   200,
+  emitRate: 50,
+  burst:    60,
+  sway:     0,
+  trail:    0,
+};
+
+// ─── Particle class ───────────────────────────────────────────────────────
+class Particle {
+  constructor(key) {
+    const preset = PRESETS[key];
+    this.preset = preset;
+    this.key    = key;
+
+    const cx = W / 2;
+    const cy = H / 2;
+
+    if (P.speed === 0) {
+      this.x = rand(40, W - 40);
+      this.y = rand(40, H - 40);
+    } else {
+      this.x = cx;
+      this.y = cy;
+    }
+
+    const spd = P.speed;
+    let angle;
+
+    if (preset.radial) {
+      const baseAngle = Math.random() * Math.PI * 2;
+      angle = baseAngle + rand(-0.04, 0.04);
+    } else if (key === 'rain') {
+      const spreadRad = (P.spread / 2) * (Math.PI / 180);
+      angle = (Math.PI / 2) + rand(-spreadRad, spreadRad);
+    } else {
+      const spreadRad = (P.spread / 2) * (Math.PI / 180);
+      angle = (-Math.PI / 2) + rand(-spreadRad, spreadRad);
+    }
+
+    this.vx = Math.cos(angle) * spd;
+    this.vy = Math.sin(angle) * spd;
+
+    this.lifetime    = P.lifetime;
+    this.age         = 0;
+    this.drag        = P.drag;
+    this.gravity     = P.gravity;
+    this.sizeDecay   = preset.sizeDecay;
+    this.alphaEnd    = preset.alphaEnd;
+    this.color       = pick(COLORS);
+    this.letter      = pick(LETTERS);
+    this.fontSize    = P.size;
+    this.trailWidth  = P.trail;
+
+    // Sway — use slider value, but only activate if preset supports it or sway > 0
+    const swayAmp = P.sway;
+    if (swayAmp > 0) {
+      this.swayAmp   = swayAmp;
+      this.swayFreq  = preset.sway ? mid(preset.sway.frequency) : 0.5;
+      this.swayPhase = Math.random() * Math.PI * 2;
+      this.swayOriginX = this.x;
+    } else {
+      this.swayAmp = 0;
+    }
+
+    this.rotation      = preset.rotation ? rand(0, Math.PI * 2) : 0;
+    this.rotationSpeed = preset.rotation ? rand(-3, 3) : 0;
+  }
+
+  get progress() { return this.age / this.lifetime; }
+  get alive()    { return this.age < this.lifetime; }
+
+  get alpha() {
+    const p = this.progress;
+    const fadeStart = 0.7;
+    if (p < fadeStart) return 1;
+    const t = (p - fadeStart) / (1 - fadeStart);
+    return lerp(1, this.alphaEnd, t);
+  }
+
+  get size() {
+    return this.fontSize * lerp(1, this.sizeDecay, this.progress);
+  }
+
+  update(dt) {
+    this.age += dt;
+    const dragFactor = Math.pow(this.drag, dt * 60);
+    this.vx *= dragFactor;
+    this.vy *= dragFactor;
+    this.vy += this.gravity * dt;
+    this.x  += this.vx * dt;
+    this.y  += this.vy * dt;
+
+    if (this.swayAmp > 0) {
+      this.x = this.swayOriginX +
+        Math.sin(this.age * this.swayFreq * Math.PI * 2 + this.swayPhase) * this.swayAmp;
+    }
+    this.rotation += this.rotationSpeed * dt;
+  }
+
+  draw(ctx) {
+    const alpha = clamp(this.alpha, 0, 1);
+    if (alpha <= 0) return;
+    const sz = Math.max(1, this.size);
+
+    // Trail
+    if (this.trailWidth > 0 && this.age > 0) {
+      const prevX = this.x - this.vx * 0.016;
+      const prevY = this.y - this.vy * 0.016;
+      ctx.save();
+      ctx.globalAlpha = alpha * 0.55;
+      ctx.beginPath();
+      ctx.moveTo(prevX, prevY);
+      ctx.lineTo(this.x, this.y);
+      ctx.strokeStyle = this.color;
+      ctx.lineWidth = this.trailWidth;
+      ctx.lineCap = 'round';
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    if (this.rotationSpeed !== 0) ctx.rotate(this.rotation);
+    ctx.globalAlpha = alpha;
+    ctx.font = `bold ${sz}px monospace`;
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle    = this.color;
+    ctx.fillText(this.letter, 0, 0);
+    ctx.restore();
+  }
+}
+
+// ─── Emitter ──────────────────────────────────────────────────────────────
+let particles       = [];
+let currentKey      = 'sparkler';
+let emitAccumulator = 0;
+let burstTimer      = 0;
+let lastTime        = null;
+
+function spawnParticle() {
+  particles.push(new Particle(currentKey));
+}
+
+function burst() {
+  const count = Math.round(P.burst);
+  for (let i = 0; i < count; i++) spawnParticle();
+}
+
+function setPreset(key) {
+  currentKey = key;
+  particles  = [];
+  emitAccumulator = 0;
+  burstTimer      = 0;
+  syncSlidersToPreset(key);
+  updateBurstVisibility(key);
+  const preset = PRESETS[key];
+  if (preset.emitRate === 'burst') burst();
+}
+
+// ─── Main loop ────────────────────────────────────────────────────────────
+function loop(ts) {
+  requestAnimationFrame(loop);
+  if (lastTime === null) { lastTime = ts; }
+  const dt = Math.min((ts - lastTime) / 1000, 0.1);
+  lastTime = ts;
+
+  ctx.clearRect(0, 0, W, H);
+
+  const preset = PRESETS[currentKey];
+
+  if (preset.emitRate === 'burst') {
+    burstTimer += dt;
+    if (burstTimer >= 2) { burstTimer = 0; burst(); }
+  } else {
+    emitAccumulator += P.emitRate * dt;
+    while (emitAccumulator >= 1) {
+      emitAccumulator -= 1;
+      spawnParticle();
+    }
+  }
+
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.update(dt);
+    if (!p.alive) { particles.splice(i, 1); } else { p.draw(ctx); }
+  }
+}
+
+requestAnimationFrame(loop);
+
+// ─── UI: Dropdown ─────────────────────────────────────────────────────────
+const select = document.getElementById('preset-select');
+const note   = document.getElementById('preset-note');
+
+Object.entries(PRESETS).forEach(([key, preset]) => {
+  const opt = document.createElement('option');
+  opt.value = key;
+  opt.textContent = preset.name;
+  select.appendChild(opt);
+});
+
+function applySelect() {
+  const key = select.value;
+  note.textContent = PRESET_NOTES[key] || '';
+  setPreset(key);
+}
+
+select.addEventListener('change', applySelect);
+
+// ─── UI: Panel sliders ────────────────────────────────────────────────────
+const sliderDefs = [
+  { id: 's-size',     vid: 'v-size',     key: 'size',     fmt: v => v + ' px'   },
+  { id: 's-lifetime', vid: 'v-lifetime', key: 'lifetime', fmt: v => v + ' s'    },
+  { id: 's-speed',    vid: 'v-speed',    key: 'speed',    fmt: v => v + ' px/s' },
+  { id: 's-gravity',  vid: 'v-gravity',  key: 'gravity',  fmt: v => v + ' px/s²'},
+  { id: 's-drag',     vid: 'v-drag',     key: 'drag',     fmt: v => v           },
+  { id: 's-spread',   vid: 'v-spread',   key: 'spread',   fmt: v => v + '°'     },
+  { id: 's-emitrate', vid: 'v-emitrate', key: 'emitRate', fmt: v => v + ' 个/s' },
+  { id: 's-burst',    vid: 'v-burst',    key: 'burst',    fmt: v => v + ' 个'   },
+  { id: 's-sway',     vid: 'v-sway',     key: 'sway',     fmt: v => v + ' px'   },
+  { id: 's-trail',    vid: 'v-trail',    key: 'trail',    fmt: v => v + ' px'   },
+];
+
+sliderDefs.forEach(({ id, vid, key, fmt }) => {
+  const el = document.getElementById(id);
+  const vl = document.getElementById(vid);
+  el.addEventListener('input', () => {
+    P[key] = parseFloat(el.value);
+    vl.textContent = fmt(parseFloat(el.value).toFixed(
+      key === 'drag' ? 3 : key === 'lifetime' ? 1 : 0
+    ));
+    // Clear particles so new settings apply immediately (burst: reburst)
+    particles = [];
+    emitAccumulator = 0;
+    burstTimer = 0;
+    if (PRESETS[currentKey].emitRate === 'burst') burst();
+  });
+});
+
+// Sync all sliders to preset midpoints
+function syncSlidersToPreset(key) {
+  const preset = PRESETS[key];
+
+  function setSlider(id, vid, value, fmt, decimals) {
+    const el = document.getElementById(id);
+    const vl = document.getElementById(vid);
+    el.value = value;
+    vl.textContent = fmt(parseFloat(value).toFixed(decimals));
+  }
+
+  const lifeMid    = mid(preset.lifetime);
+  const speedMid   = mid(preset.speed);
+  const gravMid    = mid(preset.gravity);
+  const dragMid    = mid(preset.drag);
+  const spreadVal  = preset.spread;
+  const emitMid    = preset.emitRate === 'burst' ? 50 : mid(preset.emitRate);
+  const burstMid   = preset.burstCount ? mid(preset.burstCount) : 60;
+  const swayMid    = preset.sway ? mid(preset.sway.amplitude) : 0;
+
+  P.size     = 13;
+  P.lifetime = parseFloat(lifeMid.toFixed(1));
+  P.speed    = Math.round(speedMid);
+  P.gravity  = Math.round(gravMid);
+  P.drag     = parseFloat(dragMid.toFixed(3));
+  P.spread   = spreadVal;
+  P.emitRate = Math.round(emitMid);
+  P.burst    = Math.round(burstMid);
+  P.sway     = Math.round(swayMid);
+  P.trail    = 0;
+
+  setSlider('s-size',     'v-size',     P.size,     v => v + ' px',    0);
+  setSlider('s-lifetime', 'v-lifetime', P.lifetime, v => v + ' s',     1);
+  setSlider('s-speed',    'v-speed',    P.speed,    v => v + ' px/s',  0);
+  setSlider('s-gravity',  'v-gravity',  P.gravity,  v => v + ' px/s²', 0);
+  setSlider('s-drag',     'v-drag',     P.drag,     v => v,            3);
+  setSlider('s-spread',   'v-spread',   P.spread,   v => v + '°',      0);
+  setSlider('s-emitrate', 'v-emitrate', P.emitRate, v => v + ' 个/s',  0);
+  setSlider('s-burst',    'v-burst',    P.burst,    v => v + ' 个',    0);
+  setSlider('s-sway',     'v-sway',     P.sway,     v => v + ' px',    0);
+  setSlider('s-trail',    'v-trail',    P.trail,    v => v + ' px',    0);
+}
+
+function updateBurstVisibility(key) {
+  const isBurst = PRESETS[key].emitRate === 'burst';
+  document.getElementById('row-emitrate').style.display = isBurst ? 'none' : 'block';
+  document.querySelectorAll('.burst-only').forEach(el => {
+    el.style.display = isBurst ? 'block' : 'none';
+  });
+}
+
+// ─── Panel toggle ─────────────────────────────────────────────────────────
+const panel     = document.getElementById('panel');
+const toggleBtn = document.getElementById('toggle-btn');
+let collapsed   = false;
+toggleBtn.addEventListener('click', () => {
+  collapsed = !collapsed;
+  panel.classList.toggle('collapsed', collapsed);
+  toggleBtn.textContent = collapsed ? '›' : '‹';
+  toggleBtn.style.right = collapsed ? '24px' : '264px';
+});
+
+// ─── Copy params button ───────────────────────────────────────────────────
+document.getElementById('copy-btn').addEventListener('click', () => {
+  const data = {
+    preset:   currentKey,
+    presetName: PRESETS[currentKey].name,
+    params: {
+      size:      P.size,
+      lifetime:  P.lifetime,
+      speed:     P.speed,
+      gravity:   P.gravity,
+      drag:      P.drag,
+      spread:    P.spread,
+      emitRate:  P.emitRate,
+      burstCount: P.burst,
+      swayAmplitude: P.sway,
+      trailWidth: P.trail,
+    }
+  };
+  navigator.clipboard.writeText(JSON.stringify(data, null, 2)).then(() => {
+    const btn = document.getElementById('copy-btn');
+    btn.textContent = '已复制 ✓';
+    setTimeout(() => { btn.textContent = '复制参数（JSON）'; }, 1800);
+  }).catch(() => {
+    // fallback
+    const ta = document.createElement('textarea');
+    ta.value = JSON.stringify(data, null, 2);
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    const btn = document.getElementById('copy-btn');
+    btn.textContent = '已复制 ✓';
+    setTimeout(() => { btn.textContent = '复制参数（JSON）'; }, 1800);
+  });
+});
+
+// ─── Initial ──────────────────────────────────────────────────────────────
+select.value = 'sparkler';
+applySelect();
+</script>
+</body>
+</html>
