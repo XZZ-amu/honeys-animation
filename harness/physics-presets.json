@@ -1,0 +1,212 @@
+{
+  "_doc": "动画类型→物理参数映射表。系统生成动画时根据动画类型查此表取参数，不允许自己猜。单位：速度=px/s，重力=px/s²，寿命=秒，drag=每帧衰减系数(0-1)，spread=度，emitRate=个/秒",
+
+  "sparkler": {
+    "name": "仙女棒火花",
+    "lifetime": [0.25, 0.5],
+    "speed": [150, 500],
+    "gravity": [200, 400],
+    "drag": [0.95, 0.97],
+    "spread": 200,
+    "emitRate": [60, 100],
+    "sizeDecay": 0.3,
+    "alphaEnd": 0,
+    "notes": "高初速+中重力+高阻力+大散角=短促放射状"
+  },
+
+  "snow": {
+    "name": "雪花飘落",
+    "lifetime": [4, 8],
+    "speed": [20, 60],
+    "gravity": [30, 80],
+    "drag": [0.99, 0.995],
+    "spread": 30,
+    "emitRate": [10, 30],
+    "sizeDecay": 1.0,
+    "alphaEnd": 0,
+    "sway": { "amplitude": [10, 30], "frequency": [0.5, 1.5] },
+    "notes": "低速+弱重力+几乎无阻力+横向摆动=缓慢飘荡"
+  },
+
+  "explosion": {
+    "name": "爆炸",
+    "lifetime": [0.3, 0.8],
+    "speed": [400, 1000],
+    "gravity": [0, 100],
+    "drag": [0.92, 0.96],
+    "spread": 360,
+    "emitRate": "burst",
+    "burstCount": [30, 80],
+    "sizeDecay": 0.2,
+    "alphaEnd": 0,
+    "notes": "极高初速+低重力+高阻力+全向=瞬间扩散后急速停止"
+  },
+
+  "flame": {
+    "name": "火焰",
+    "lifetime": [0.5, 1.2],
+    "speed": [80, 200],
+    "gravity": [-100, -200],
+    "drag": [0.96, 0.98],
+    "spread": 30,
+    "emitRate": [30, 60],
+    "sizeDecay": 0.5,
+    "alphaEnd": 0,
+    "notes": "中速+负重力(向上)+窄散角=向上升腾"
+  },
+
+  "smoke": {
+    "name": "烟雾",
+    "lifetime": [2, 5],
+    "speed": [20, 80],
+    "gravity": [-20, -60],
+    "drag": [0.98, 0.995],
+    "spread": 45,
+    "emitRate": [5, 15],
+    "sizeDecay": 2.0,
+    "alphaEnd": 0,
+    "notes": "低速+微弱负重力+极低阻力+逐渐变大=缓慢膨胀上飘"
+  },
+
+  "rain": {
+    "name": "雨",
+    "lifetime": [0.5, 1.5],
+    "speed": [400, 800],
+    "gravity": [600, 1000],
+    "drag": [0.99, 1.0],
+    "spread": 5,
+    "emitRate": [30, 80],
+    "sizeDecay": 1.0,
+    "alphaEnd": 0.3,
+    "notes": "高初速+强重力+几乎无阻力+极窄角度=快速直线下落"
+  },
+
+  "fountain": {
+    "name": "喷泉",
+    "lifetime": [1, 2.5],
+    "speed": [200, 500],
+    "gravity": [300, 500],
+    "drag": [0.98, 0.99],
+    "spread": 40,
+    "emitRate": [20, 50],
+    "sizeDecay": 0.8,
+    "alphaEnd": 0,
+    "notes": "中高初速+强重力=抛物线轨迹，向上喷射后回落"
+  },
+
+  "bubbles": {
+    "name": "气泡上浮",
+    "lifetime": [3, 7],
+    "speed": [30, 80],
+    "gravity": [-40, -100],
+    "drag": [0.99, 0.995],
+    "spread": 20,
+    "emitRate": [3, 10],
+    "sizeDecay": 1.2,
+    "alphaEnd": 0,
+    "sway": { "amplitude": [5, 15], "frequency": [0.3, 0.8] },
+    "notes": "低速+负重力+横向摆动=缓慢上浮带摇晃"
+  },
+
+  "fireworks": {
+    "name": "烟花",
+    "lifetime": [1, 2],
+    "speed": [200, 600],
+    "gravity": [150, 300],
+    "drag": [0.96, 0.98],
+    "spread": 360,
+    "emitRate": "burst",
+    "burstCount": [40, 100],
+    "sizeDecay": 0.4,
+    "alphaEnd": 0,
+    "notes": "爆炸的慢速版：全向散开+有重力=抛物线下坠"
+  },
+
+  "confetti": {
+    "name": "五彩纸屑",
+    "lifetime": [2, 5],
+    "speed": [100, 300],
+    "gravity": [100, 200],
+    "drag": [0.97, 0.99],
+    "spread": 120,
+    "emitRate": [20, 50],
+    "sizeDecay": 1.0,
+    "alphaEnd": 0.5,
+    "sway": { "amplitude": [20, 50], "frequency": [1, 3] },
+    "rotation": true,
+    "notes": "中速+中重力+大幅横向摆动+旋转=飘飘荡荡下落"
+  },
+
+  "firefly": {
+    "name": "萤火虫",
+    "lifetime": [3, 8],
+    "speed": [10, 40],
+    "gravity": [0, 0],
+    "drag": [0.98, 0.99],
+    "spread": 360,
+    "emitRate": [2, 8],
+    "sizeDecay": 1.0,
+    "alphaEnd": 0,
+    "alphaPulse": { "frequency": [0.5, 2], "min": 0.2 },
+    "sway": { "amplitude": [15, 40], "frequency": [0.2, 0.6] },
+    "notes": "极低速+无重力+随机漫步+闪烁=悬浮游荡"
+  },
+
+  "stars": {
+    "name": "星空闪烁",
+    "lifetime": [2, 6],
+    "speed": [0, 0],
+    "gravity": [0, 0],
+    "drag": [1, 1],
+    "spread": 0,
+    "emitRate": [5, 15],
+    "sizeDecay": 1.0,
+    "alphaEnd": 0,
+    "alphaPulse": { "frequency": [0.3, 1.5], "min": 0.1 },
+    "notes": "静止+闪烁=原地出现→亮→灭→消失"
+  },
+
+  "hyperspace": {
+    "name": "超空间/星轨",
+    "lifetime": [0.5, 1.5],
+    "speed": [500, 2000],
+    "gravity": [0, 0],
+    "drag": [1, 1],
+    "spread": 5,
+    "emitRate": [30, 80],
+    "sizeDecay": 0.5,
+    "alphaEnd": 0,
+    "radial": true,
+    "notes": "极高速+无重力+无阻力+从中心向外辐射=速度线效果"
+  },
+
+  "leaves": {
+    "name": "落叶",
+    "lifetime": [3, 7],
+    "speed": [30, 80],
+    "gravity": [40, 100],
+    "drag": [0.98, 0.99],
+    "spread": 60,
+    "emitRate": [3, 10],
+    "sizeDecay": 1.0,
+    "alphaEnd": 0.3,
+    "sway": { "amplitude": [30, 60], "frequency": [0.3, 0.8] },
+    "rotation": true,
+    "notes": "低速+弱重力+大幅摆动+旋转=飘飘落下"
+  },
+
+  "dust_motes": {
+    "name": "发光尘埃/粒子上浮",
+    "lifetime": [4, 10],
+    "speed": [5, 25],
+    "gravity": [-10, -30],
+    "drag": [0.995, 0.999],
+    "spread": 360,
+    "emitRate": [3, 8],
+    "sizeDecay": 1.0,
+    "alphaEnd": 0,
+    "alphaPulse": { "frequency": [0.2, 0.8], "min": 0.3 },
+    "sway": { "amplitude": [5, 15], "frequency": [0.1, 0.4] },
+    "notes": "极低速+微弱负重力+缓慢漂移+呼吸闪烁=梦幻漂浮感"
+  }
+}
