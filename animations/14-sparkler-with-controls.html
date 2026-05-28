@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sparkler Letters - 调参版</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #f0f0f5;
+      overflow: hidden;
+      width: 100vw;
+      height: 100vh;
+      font-family: system-ui, sans-serif;
+    }
+    canvas { display: block; }
+
+    #panel {
+      position: fixed;
+      top: 0;
+      right: 0;
+      width: 260px;
+      height: 100vh;
+      background: rgba(20,20,30,0.85);
+      color: #fff;
+      padding: 16px;
+      overflow-y: auto;
+      transition: transform 0.3s;
+      z-index: 100;
+      font-size: 12px;
+    }
+    #panel.collapsed { transform: translateX(240px); }
+    #toggle-btn {
+      position: fixed;
+      top: 12px;
+      right: 264px;
+      width: 28px;
+      height: 28px;
+      background: rgba(20,20,30,0.85);
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+      z-index: 101;
+      transition: right 0.3s;
+    }
+    #panel.collapsed ~ #toggle-btn { right: 24px; }
+
+    .group { margin: 12px 0 6px; color: rgba(255,255,255,0.4); font-size: 10px; text-transform: uppercase; letter-spacing: 1px; }
+    .row { margin-bottom: 8px; }
+    .row label { display: flex; justify-content: space-between; margin-bottom: 3px; }
+    .row label span:last-child { color: rgba(255,255,255,0.5); font-variant-numeric: tabular-nums; }
+    input[type=range] { width: 100%; height: 4px; -webkit-appearance: none; background: rgba(255,255,255,0.15); border-radius: 2px; outline: none; }
+    input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; background: #fff; border-radius: 50%; cursor: pointer; }
+  </style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+
+<button id="toggle-btn">‹</button>
+<div id="panel">
+  <div class="group">粒子</div>
+  <div class="row"><label><span>字母大小</span><span id="v-size">12</span></label><input type="range" id="s-size" min="6" max="40" step="1" value="12"></div>
+  <div class="row"><label><span>喷射间隔</span><span id="v-interval">15 ms</span></label><input type="range" id="s-interval" min="5" max="60" step="1" value="15"></div>
+  <div class="row"><label><span>每次数量</span><span id="v-count">3</span></label><input type="range" id="s-count" min="1" max="8" step="1" value="3"></div>
+  <div class="row"><label><span>存活帧数</span><span id="v-life">25</span></label><input type="range" id="s-life" min="8" max="60" step="1" value="25"></div>
+  <div class="row"><label><span>飞行速度</span><span id="v-speed">5.0</span></label><input type="range" id="s-speed" min="1" max="12" step="0.5" value="5"></div>
+  <div class="row"><label><span>散开角度</span><span id="v-spread">200°</span></label><input type="range" id="s-spread" min="60" max="360" step="10" value="200"></div>
+
+  <div class="group">物理</div>
+  <div class="row"><label><span>重力</span><span id="v-gravity">0.06</span></label><input type="range" id="s-gravity" min="0" max="0.2" step="0.005" value="0.06"></div>
+  <div class="row"><label><span>空气阻力</span><span id="v-drag">0.992</span></label><input type="range" id="s-drag" min="0.95" max="1" step="0.001" value="0.992"></div>
+
+  <div class="group">视觉</div>
+  <div class="row"><label><span>尾迹粗细</span><span id="v-trail">1.5 px</span></label><input type="range" id="s-trail" min="0" max="5" step="0.1" value="1.5"></div>
+</div>
+
+<script>
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+  window.addEventListener('resize', () => {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    initDots();
+  });
+
+  // ── 可调参数（滑块直接写这里）──
+  const P = {
+    size: 12,
+    interval: 15,
+    count: 3,
+    life: 25,
+    speed: 5,
+    spread: 200,
+    gravity: 0.06,
+    drag: 0.992,
+    trail: 1.5,
+  };
+
+  // ── 滑块绑定 ──
+  const sliders = [
+    { s: 's-size',     v: 'v-size',     k: 'size',     fmt: v => v },
+    { s: 's-interval', v: 'v-interval', k: 'interval', fmt: v => v + ' ms' },
+    { s: 's-count',    v: 'v-count',    k: 'count',    fmt: v => v },
+    { s: 's-life',     v: 'v-life',     k: 'life',     fmt: v => v },
+    { s: 's-speed',    v: 'v-speed',    k: 'speed',    fmt: v => v },
+    { s: 's-spread',   v: 'v-spread',   k: 'spread',   fmt: v => v + '°' },
+    { s: 's-gravity',  v: 'v-gravity',  k: 'gravity',  fmt: v => v },
+    { s: 's-drag',     v: 'v-drag',     k: 'drag',     fmt: v => v },
+    { s: 's-trail',    v: 'v-trail',    k: 'trail',    fmt: v => v + ' px' },
+  ];
+  sliders.forEach(({ s, v, k, fmt }) => {
+    const sl = document.getElementById(s);
+    const vl = document.getElementById(v);
+    sl.addEventListener('input', () => {
+      P[k] = parseFloat(sl.value);
+      vl.textContent = fmt(sl.value);
+    });
+  });
+
+  // ── 面板收起/展开 ──
+  const panel = document.getElementById('panel');
+  const toggleBtn = document.getElementById('toggle-btn');
+  let collapsed = false;
+  toggleBtn.addEventListener('click', () => {
+    collapsed = !collapsed;
+    panel.classList.toggle('collapsed', collapsed);
+    toggleBtn.textContent = collapsed ? '›' : '‹';
+  });
+
+  // ── 颜色和字母 ──
+  const colors = ['#FF8C00', '#4169E1', '#FF1493', '#32CD32', '#ADFF2F'];
+  const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  function randomLetter() { return letters[Math.floor(Math.random() * letters.length)]; }
+  function randomColor() { return colors[Math.floor(Math.random() * colors.length)]; }
+
+  // ── 棒身装饰点 ──
+  let stickDots = [];
+  function initDots() {
+    stickDots = [];
+    const dotColors = ['#FF8C00','#4169E1','#FF1493','#32CD32','#ADFF2F','#FF6347','#00BFFF','#FFD700'];
+    const count = 15 + Math.floor(Math.random() * 6);
+    for (let i = 0; i < count; i++) {
+      stickDots.push({
+        t: 0.05 + Math.random() * 0.88,
+        offset: (Math.random() - 0.5) * 10,
+        size: 2 + Math.random() * 3,
+        color: dotColors[Math.floor(Math.random() * dotColors.length)],
+      });
+    }
+  }
+  initDots();
+
+  // ── 棒的位置 ──
+  function getStickGeometry() {
+    const w = canvas.width, h = canvas.height;
+    return { baseX: w * 0.47, baseY: h * 1.02, tipX: w * 0.50, tipY: h * 0.38 };
+  }
+
+  // ── 粒子 ──
+  let particles = [];
+  let lastSpawnTime = 0;
+
+  function spawnParticle(cx, cy) {
+    const baseAngle = -Math.PI / 2;
+    const spreadRad = (P.spread / 360) * Math.PI * 2;
+    const angle = baseAngle + (Math.random() - 0.5) * spreadRad;
+
+    const spd = P.speed * 0.5 + Math.random() * P.speed * 1.1;
+    const vx = Math.cos(angle) * spd;
+    const vy = Math.sin(angle) * spd;
+
+    const x = cx + (Math.random() - 0.5) * 5;
+    const y = cy + (Math.random() - 0.5) * 5;
+
+    const maxLife = P.life + Math.random() * (P.life * 0.5) - P.life * 0.25;
+
+    particles.push({
+      x, y, spawnX: cx, spawnY: cy,
+      vx, vy,
+      letter: randomLetter(),
+      color: randomColor(),
+      size: P.size * (0.7 + Math.random() * 0.6),
+      alpha: 1, life: 0,
+      maxLife: Math.max(maxLife, 5),
+    });
+  }
+
+  // ── 画棒 ──
+  function drawStick(tipX, tipY, baseX, baseY) {
+    const dx = baseX - tipX, dy = baseY - tipY;
+    const len = Math.sqrt(dx*dx + dy*dy);
+    const nx = -dy/len, ny = dx/len;
+
+    ctx.beginPath();
+    ctx.moveTo(tipX, tipY);
+    ctx.lineTo(baseX, baseY);
+    ctx.strokeStyle = '#FF1493';
+    ctx.lineWidth = 3.5;
+    ctx.lineCap = 'round';
+    ctx.stroke();
+
+    for (const dot of stickDots) {
+      const px = tipX + (baseX-tipX)*dot.t + nx*dot.offset;
+      const py = tipY + (baseY-tipY)*dot.t + ny*dot.offset;
+      ctx.beginPath();
+      ctx.arc(px, py, dot.size/2, 0, Math.PI*2);
+      ctx.fillStyle = dot.color;
+      ctx.fill();
+    }
+  }
+
+  // ── 动画循环 ──
+  function animate(timestamp) {
+    requestAnimationFrame(animate);
+    const { baseX, baseY, tipX, tipY } = getStickGeometry();
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#f0f0f5';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    drawStick(tipX, tipY, baseX, baseY);
+
+    // 喷射
+    if (timestamp - lastSpawnTime > P.interval) {
+      const count = Math.round(P.count);
+      for (let i = 0; i < count; i++) spawnParticle(tipX, tipY);
+      lastSpawnTime = timestamp;
+    }
+
+    // 更新和绘制粒子
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.life++;
+      const progress = p.life / p.maxLife;
+
+      if (progress < 0.15) { p.alpha = progress / 0.15; }
+      else { const t = (progress - 0.15) / 0.85; p.alpha = 1 - t*t; }
+
+      p.vy += P.gravity;
+      p.vx *= P.drag;
+      p.vy *= P.drag;
+      p.x += p.vx;
+      p.y += p.vy;
+
+      if (p.life >= p.maxLife) { particles.splice(i, 1); continue; }
+
+      const a = Math.max(0, p.alpha);
+
+      // 尾迹
+      if (P.trail > 0) {
+        ctx.save();
+        ctx.globalAlpha = a * 0.7;
+        ctx.beginPath();
+        ctx.moveTo(p.spawnX, p.spawnY);
+        ctx.lineTo(p.x, p.y);
+        ctx.strokeStyle = p.color;
+        ctx.lineWidth = P.trail;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // 字母
+      const currentSize = p.size * (1 - progress * 0.85);
+      ctx.save();
+      ctx.globalAlpha = a;
+      ctx.translate(p.x, p.y);
+      ctx.font = `bold ${Math.max(1, currentSize)}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = p.color;
+      ctx.fillText(p.letter, 0, 0);
+      ctx.restore();
+    }
+  }
+
+  requestAnimationFrame(animate);
+</script>
+</body>
+</html>
