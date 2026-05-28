@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wind Scatter – ByteDance</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #D4C9B0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    font-family: sans-serif;
+  }
+
+  #notebook {
+    position: relative;
+    width: 680px;
+    height: 420px;
+    background: #FDF8E8;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.18), 0 1px 4px rgba(0,0,0,0.10);
+  }
+
+  canvas {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+  }
+</style>
+</head>
+<body>
+
+<div id="notebook">
+  <canvas id="c" width="680" height="420"></canvas>
+</div>
+
+<script>
+const W = 680, H = 420;
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+// ── Notebook config ──────────────────────────────────────────
+const LINE_SPACING = 32;
+const MARGIN_LEFT  = 60;
+const MARGIN_TOP   = 28;
+const PAPER_COLOR  = '#FDF8E8';
+const LINE_COLOR   = 'rgba(100,150,200,0.3)';
+const RED_LINE     = 'rgba(200,100,100,0.3)';
+const INK_COLOR    = '#2C3E50';
+const BD_FINAL_COLOR = '#4169E1';
+
+// ── Text content ────────────────────────────────────────────
+// 7 lines; ByteDance sits in line 4 (index 3), mid-left area
+const LINES = [
+  "Every morning the quiet hum of servers fills the air,",
+  "packets traveling across invisible highways of light.",
+  "Somewhere a function returns, a promise resolves,",
+  "and the ByteDance dream pulses through the network.",
+  "Engineers weave logic into elegant tapestries of code,",
+  "each commit a small step toward something larger.",
+  "The cursor blinks, patient as ever, waiting.",
+];
+
+const BYTEDANCE = "ByteDance";
+
+// Font settings
+const FONT_SIZE = 19;
+const FONT = `${FONT_SIZE}px 'Segoe Script', 'Comic Sans MS', cursive`;
+
+// ── Pre-measure every letter position ───────────────────────
+// We'll store each letter as an object: { ch, x, y, isBD }
+let allLetters = [];
+
+function measureLetters() {
+  allLetters = [];
+  ctx.font = FONT;
+  ctx.textBaseline = 'alphabetic';
+
+  LINES.forEach((line, rowIdx) => {
+    const baseY = MARGIN_TOP + (rowIdx + 1) * LINE_SPACING;
+    let curX = MARGIN_LEFT + 8;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      const w  = ctx.measureText(ch).width;
+      // detect if this char belongs to ByteDance in line 3 (0-indexed)
+      const bdStart = line.indexOf(BYTEDANCE);
+      const isBD = rowIdx === 3 && bdStart !== -1 && i >= bdStart && i < bdStart + BYTEDANCE.length;
+      allLetters.push({ ch, x: curX, y: baseY, isBD, w, row: rowIdx, col: i });
+      curX += w;
+    }
+  });
+}
+
+// ── Particle pool ────────────────────────────────────────────
+// Physics preset: leaves + dust_motes hybrid
+// speed 40–90, gravity -15 (slight upward), drag 0.985, sway amp 25–40, freq 0.4–0.7
+// direction: rightward + slightly upward
+class FloatingLetter {
+  constructor(letter, delay) {
+    this.letter  = letter;        // { ch, x, y, isBD, w }
+    this.delay   = delay;         // seconds before this letter starts moving
+    this.phase   = 'waiting';     // waiting | wobble | flying | gone
+
+    // wobble state
+    this.wobbleTimer = 0;
+    this.wobbleDur   = 0.22;
+
+    // flight state
+    this.fx = letter.x;
+    this.fy = letter.y;
+
+    const angle  = -0.35 + (Math.random() * 0.30 - 0.15); // roughly upper-right, ~-20°
+    const speed  = 45 + Math.random() * 45;
+    this.vx      = Math.cos(angle) * speed;
+    this.vy      = Math.sin(angle) * speed - 10;
+
+    this.gravity    = -18 + Math.random() * 8;   // mild upward float
+    this.drag       = 0.983 + Math.random() * 0.006;
+    this.swayAmp    = 22 + Math.random() * 20;
+    this.swayFreq   = 0.35 + Math.random() * 0.4;
+    this.swayPhase  = Math.random() * Math.PI * 2;
+    this.rotation   = 0;
+    this.rotSpeed   = (Math.random() - 0.5) * 1.4; // rad/s
+    this.alpha      = 1;
+    this.flightTime = 0;
+    this.flightDur  = 2.2 + Math.random() * 0.8;  // 2.2–3s
+
+    this.wobbleOffset = 0; // px horizontal shake
+  }
+
+  update(dt, globalTime) {
+    if (this.phase === 'waiting') {
+      if (globalTime >= this.delay) {
+        this.phase = 'wobble';
+        this.wobbleTimer = 0;
+      }
+      return;
+    }
+
+    if (this.phase === 'wobble') {
+      this.wobbleTimer += dt;
+      // quick left-right shake of 2px
+      this.wobbleOffset = Math.sin(this.wobbleTimer * Math.PI * 2 / 0.06) * 2.5;
+      if (this.wobbleTimer >= this.wobbleDur) {
+        this.phase = 'flying';
+        this.wobbleOffset = 0;
+      }
+      return;
+    }
+
+    if (this.phase === 'flying') {
+      this.flightTime += dt;
+
+      // physics
+      this.vy += this.gravity * dt;
+      this.vx *= this.drag;
+      this.vy *= this.drag;
+
+      // sway on top of velocity
+      const swayX = this.swayAmp * Math.sin(this.swayFreq * this.flightTime * Math.PI * 2 + this.swayPhase);
+
+      this.fx += (this.vx + swayX * dt * 30) * dt;
+      this.fy += this.vy * dt;
+
+      this.rotation += this.rotSpeed * dt;
+
+      // fade out in last 40% of flight
+      const fadeStart = this.flightDur * 0.6;
+      if (this.flightTime > fadeStart) {
+        this.alpha = 1 - (this.flightTime - fadeStart) / (this.flightDur - fadeStart);
+      }
+
+      if (this.flightTime >= this.flightDur || this.alpha <= 0) {
+        this.phase = 'gone';
+      }
+    }
+  }
+
+  draw(ctx) {
+    if (this.phase === 'gone') return;
+
+    ctx.save();
+    ctx.font = FONT;
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = INK_COLOR;
+
+    if (this.phase === 'waiting') {
+      ctx.globalAlpha = 1;
+      ctx.fillText(this.letter.ch, this.letter.x, this.letter.y);
+    } else if (this.phase === 'wobble') {
+      ctx.globalAlpha = 1;
+      ctx.fillText(this.letter.ch, this.letter.x + this.wobbleOffset, this.letter.y);
+    } else if (this.phase === 'flying') {
+      ctx.globalAlpha = Math.max(0, this.alpha);
+      // rotate around letter center
+      const cx = this.fx + this.letter.w / 2;
+      const cy = this.fy - FONT_SIZE * 0.5;
+      ctx.translate(cx, cy);
+      ctx.rotate(this.rotation);
+      ctx.fillText(this.letter.ch, -this.letter.w / 2, FONT_SIZE * 0.5);
+    }
+    ctx.restore();
+  }
+}
+
+// ── ByteDance stable letters ──────────────────────────────────
+// These just wobble once when wind hits them, then stay
+class StableLetter {
+  constructor(letter, windTime) {
+    this.letter   = letter;
+    this.windTime = windTime;  // when wind reaches this letter
+    this.wobbling = false;
+    this.wobbleT  = 0;
+    this.wobbleDur = 0.3;
+    this.offset   = 0;
+  }
+
+  update(dt, globalTime) {
+    if (!this.wobbling && globalTime >= this.windTime) {
+      this.wobbling = true;
+      this.wobbleT  = 0;
+    }
+    if (this.wobbling && this.wobbleT < this.wobbleDur) {
+      this.wobbleT += dt;
+      // damped oscillation: 3 half-cycles over wobbleDur
+      const t = this.wobbleT / this.wobbleDur;
+      this.offset = Math.sin(t * Math.PI * 6) * 3 * (1 - t);
+    } else if (this.wobbling) {
+      this.offset = 0;
+    }
+  }
+
+  draw(ctx, revealProgress) {
+    ctx.save();
+    ctx.font = FONT;
+    ctx.textBaseline = 'alphabetic';
+
+    // interpolate from INK_COLOR to BD_FINAL_COLOR based on revealProgress
+    const color = lerpColor(INK_COLOR, BD_FINAL_COLOR, revealProgress);
+    ctx.fillStyle = color;
+    ctx.globalAlpha = 1;
+    ctx.fillText(this.letter.ch, this.letter.x + this.offset, this.letter.y);
+    ctx.restore();
+  }
+}
+
+// ── Color lerp helper ────────────────────────────────────────
+function hexToRgb(hex) {
+  const r = parseInt(hex.slice(1,3),16);
+  const g = parseInt(hex.slice(3,5),16);
+  const b = parseInt(hex.slice(5,7),16);
+  return [r,g,b];
+}
+function lerpColor(a, b, t) {
+  const [r1,g1,b1] = hexToRgb(a);
+  const [r2,g2,b2] = hexToRgb(b);
+  const r = Math.round(r1 + (r2-r1)*t);
+  const g = Math.round(g1 + (g2-g1)*t);
+  const bl= Math.round(b1 + (b2-b1)*t);
+  return `rgb(${r},${g},${bl})`;
+}
+
+// ── Draw notebook background ─────────────────────────────────
+function drawNotebook() {
+  ctx.fillStyle = PAPER_COLOR;
+  ctx.fillRect(0,0,W,H);
+
+  // horizontal lines
+  ctx.strokeStyle = LINE_COLOR;
+  ctx.lineWidth = 1;
+  for (let y = MARGIN_TOP + LINE_SPACING; y < H - 10; y += LINE_SPACING) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(W, y);
+    ctx.stroke();
+  }
+
+  // left red margin
+  ctx.strokeStyle = RED_LINE;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(MARGIN_LEFT, 0);
+  ctx.lineTo(MARGIN_LEFT, H);
+  ctx.stroke();
+}
+
+// ── Animation state machine ───────────────────────────────────
+// Timeline (seconds):
+//   0–1    : static display (phase: 'static')
+//   1–6    : wind scatter   (phase: 'scatter')
+//   6–8    : reveal         (phase: 'reveal')
+//   8–9    : fade out → reset (phase: 'fadeout')
+// Total cycle: ~9s
+
+const CYCLE = 9.0;
+const SCATTER_START  = 1.0;
+const SCATTER_END    = 6.0;
+const REVEAL_START   = 6.0;
+const REVEAL_END     = 7.5;
+const FADEOUT_START  = 8.0;
+const FADEOUT_END    = 9.0;
+
+let floaters   = [];   // FloatingLetter[]
+let stables    = [];   // StableLetter[]
+let cycleTime  = 0;
+let lastTS     = null;
+let pageAlpha  = 1;    // overall fade for cycle reset
+
+function buildParticles() {
+  measureLetters();
+  floaters = [];
+  stables  = [];
+
+  // Wave delay: letters fly away in a left→right, top→bottom wave
+  // Wave spans from SCATTER_START to about SCATTER_END - 2 (giving 2s of flight)
+  const waveWindow = 2.5; // seconds over which the wave sweeps
+
+  allLetters.forEach(letter => {
+    if (letter.isBD) {
+      // wind arrives at same relative wave time but letter just wobbles
+      const waveT = letter.x / W * waveWindow + SCATTER_START;
+      stables.push(new StableLetter(letter, waveT));
+    } else {
+      // delay = position-based wave (left-top first)
+      const normX = letter.x / W;
+      const normY = letter.y / H;
+      const waveFront = normX * 0.7 + normY * 0.3; // diagonal wave
+      const delay = SCATTER_START + waveFront * waveWindow + Math.random() * 0.25;
+      floaters.push(new FloatingLetter(letter, delay));
+    }
+  });
+}
+
+function tick(ts) {
+  if (!lastTS) lastTS = ts;
+  const rawDt = Math.min((ts - lastTS) / 1000, 0.05); // cap at 50ms
+  lastTS = ts;
+  cycleTime += rawDt;
+
+  // cycle reset
+  if (cycleTime >= CYCLE) {
+    cycleTime = 0;
+    pageAlpha = 0;
+    buildParticles();
+  }
+
+  // fade in at start of cycle
+  if (cycleTime < 0.4) {
+    pageAlpha = cycleTime / 0.4;
+  } else if (cycleTime < FADEOUT_START) {
+    pageAlpha = 1;
+  } else if (cycleTime < FADEOUT_END) {
+    pageAlpha = 1 - (cycleTime - FADEOUT_START) / (FADEOUT_END - FADEOUT_START);
+  }
+
+  // update particles only during scatter phase
+  const dt = (cycleTime >= SCATTER_START && cycleTime < FADEOUT_START) ? rawDt : 0;
+  floaters.forEach(f => f.update(dt, cycleTime));
+  stables.forEach(s => s.update(dt, cycleTime));
+
+  // reveal progress for ByteDance color
+  let revealProgress = 0;
+  if (cycleTime >= REVEAL_START && cycleTime < REVEAL_END) {
+    revealProgress = (cycleTime - REVEAL_START) / (REVEAL_END - REVEAL_START);
+  } else if (cycleTime >= REVEAL_END) {
+    revealProgress = 1;
+  }
+
+  // ── draw ──────────────────────────────────────────────────
+  ctx.clearRect(0,0,W,H);
+  ctx.save();
+  ctx.globalAlpha = pageAlpha;
+
+  drawNotebook();
+
+  // In static phase, draw all letters at rest
+  if (cycleTime < SCATTER_START) {
+    ctx.font = FONT;
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = INK_COLOR;
+    allLetters.forEach(l => {
+      ctx.fillText(l.ch, l.x, l.y);
+    });
+  } else {
+    // Draw flying / waiting floaters
+    floaters.forEach(f => f.draw(ctx));
+    // Draw stable ByteDance letters
+    stables.forEach(s => s.draw(ctx, revealProgress));
+  }
+
+  ctx.restore();
+
+  requestAnimationFrame(tick);
+}
+
+// ── Boot ─────────────────────────────────────────────────────
+buildParticles();
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>
