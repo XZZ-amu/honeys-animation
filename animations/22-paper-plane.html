@@ -3,17 +3,15 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Paper Plane</title>
+<title>纸飞机与月亮</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-
   body {
+    background: #1565C0;
     width: 100vw;
     height: 100vh;
     overflow: hidden;
-    background: #1565C0;
   }
-
   canvas {
     display: block;
     width: 100%;
@@ -22,9 +20,9 @@
 </style>
 </head>
 <body>
-<canvas id="c"></canvas>
+<canvas id="canvas"></canvas>
 <script>
-const canvas = document.getElementById('c');
+const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 
 function resize() {
@@ -32,420 +30,298 @@ function resize() {
   canvas.height = window.innerHeight;
 }
 resize();
-window.addEventListener('resize', resize);
+window.addEventListener('resize', () => { resize(); initWords(); });
 
-// ── Letter Paper ──────────────────────────────────────────────
-const PAPER = {
-  w: 200,
-  h: 350,
-  get x() { return canvas.width * 0.32 - this.w / 2; },
-  get y() { return canvas.height / 2 - this.h / 2; }
-};
-
-const COLUMNS = [
-  '寄書長不達，況乃未休兵',
-  '烽火連三月，家書抵萬金',
-  '春望感時花濺淚，恨別鳥驚心',
-  '白頭搔更短，渾欲不勝簪',
-  '獨在異鄉為異客',
-  '每逢佳節倍思親',
+// ─── 文字素材 ────────────────────────────────────────────────────────────────
+const CHARS = [
+  '星','梦','风','光','影','诗','远','夜','云','月',
+  '暖','静','念','思','忆','旅','歌','画','语','心',
+  'A','B','C','D','E','F','G','H','I','J','K','L',
+  'M','N','O','P','Q','R','S','T','U','V','W','X',
+  'Y','Z','∞','★','◆','△','○'
 ];
 
-// ── Column/char position data ─────────────────────────────────
-// Pre-compute each column's x and each char's y so we can trigger fragments
-const lineSpacing = 28;
-const charH = 19;
+// ─── 飞行参数 ────────────────────────────────────────────────────────────────
+const FLIGHT_DURATION = 6000; // ms 飞行时长
+const RESET_PAUSE = 1400;     // ms 飞出后等月亮淡完再重置
 
-function getPaperLayout() {
-  const { x, y, w, h } = PAPER;
-  const colWidth = lineSpacing;
-  const startX = x + w - 18;
-  const textTop = y + 20;
-  const maxCharsPerCol = Math.floor((h - 40) / charH);
-  return { colWidth, startX, textTop, maxCharsPerCol };
-}
-
-// ── Particle system ───────────────────────────────────────────
-const particles = [];
-
-// Track which columns have been triggered
-const triggeredCols = new Set();
-
-function spawnParticlesForChar(cx, cy, elapsedMs) {
-  const count = 3 + Math.floor(Math.random() * 3); // 3–5
-  const colors = ['#FFD700', '#FFA500', '#FFAA33'];
-  for (let i = 0; i < count; i++) {
-    const w = 4 + Math.random() * 4;   // 4–8px
-    const h = 6 + Math.random() * 6;   // 6–12px
-    particles.push({
-      x: cx + (Math.random() - 0.5) * 10,
-      y: cy + (Math.random() - 0.5) * 10,
-      vx: (Math.random() - 0.5) * 40,
-      vy: -20 - Math.random() * 30,    // initial upward pop
-      w,
-      h,
-      color: colors[Math.floor(Math.random() * colors.length)],
-      rotSpeed: 3 + Math.random() * 5, // radians/s for flip
-      rotPhase: Math.random() * Math.PI * 2,
-      // spring target offsets relative to plane (set each frame)
-      targetOffsetX: -(50 + Math.random() * 150),
-      targetOffsetY: (Math.random() - 0.5) * 50,
-      spawnTime: elapsedMs,
-    });
-  }
-}
-
-// Trigger column ci at time elapsedMs (seconds float)
-function triggerColumn(ci, elapsedMs) {
-  if (triggeredCols.has(ci)) return;
-  triggeredCols.add(ci);
-
-  const { startX, textTop, maxCharsPerCol, colWidth } = getPaperLayout();
-  const cx = startX - ci * colWidth;
-  if (cx < PAPER.x + 6) return;
-
-  const col = COLUMNS[ci] || '';
-  const chars = col.split('').slice(0, maxCharsPerCol);
-
-  chars.forEach((ch, ri) => {
-    const staggerMs = ri * (30 + Math.random() * 20); // 30–50ms stagger
-    const triggerAt = elapsedMs * 1000 + staggerMs;
-    // Schedule the spawn (store as pending)
-    pendingSpawns.push({
-      cx,
-      cy: textTop + ri * charH,
-      triggerAtMs: triggerAt,
-    });
-  });
-}
-
-const pendingSpawns = [];
-
-function processPendingSpawns(nowMs) {
-  for (let i = pendingSpawns.length - 1; i >= 0; i--) {
-    const p = pendingSpawns[i];
-    if (nowMs >= p.triggerAtMs) {
-      spawnParticlesForChar(p.cx, p.cy, nowMs / 1000);
-      pendingSpawns.splice(i, 1);
-    }
-  }
-}
-
-
-function drawParticles(elapsedSec) {
-  ctx.save();
-  for (const p of particles) {
-    const age = elapsedSec - p.spawnTime;
-    // Flip: width oscillates via cos
-    const flipW = Math.abs(Math.cos(p.rotPhase + elapsedSec * p.rotSpeed)) * p.w;
-    const alpha = Math.min(1, Math.max(0, 1 - age * 0.08)); // very slow fade
-
-    ctx.globalAlpha = alpha;
-    ctx.fillStyle = p.color;
-    ctx.beginPath();
-    ctx.ellipse(p.x, p.y, Math.max(0.5, flipW / 2), p.h / 2, 0, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.globalAlpha = 1;
-  ctx.restore();
-}
-
-// ── Draw paper with clip mask (left side disappears) ──────────
-// clipX is the x coordinate of the paper below which we don't draw
-// (to the left of clipX the paper has been "taken away")
-function drawPaper(clipX) {
-  const { x, y, w, h } = PAPER;
-
-  ctx.save();
-
-  // Shadow (draw separately to avoid clip affecting it)
-  ctx.shadowColor = 'rgba(0,0,0,0.25)';
-  ctx.shadowBlur = 18;
-  ctx.shadowOffsetX = 4;
-  ctx.shadowOffsetY = 6;
-
-  // White background — only draw the part to the right of clipX
-  // clipX = plane x, paper disappears to the left of it
-  const edgeFade = 28; // gradient width
-  const paperRight = x + w;
-
-  if (clipX < paperRight) {
-    // The visible portion of paper starts at clipX (with fade)
-    const drawLeft = Math.max(x, clipX - edgeFade);
-
-    // Clip region: drawLeft to paperRight
-    ctx.beginPath();
-    ctx.rect(drawLeft, y - 20, paperRight - drawLeft + 10, h + 40);
-    ctx.clip();
-
-    // Fill the full white rect first; clip will hide left part
-    ctx.fillStyle = 'rgba(255,255,255,0.9)';
-    ctx.beginPath();
-    ctx.roundRect(x, y, w, h, 4);
-    ctx.fill();
-  }
-
-  ctx.restore();
-
-  // Now draw the gradient fade edge (left edge of remaining paper)
-  if (clipX > x && clipX < paperRight) {
-    ctx.save();
-    const fadeLeft = Math.max(x, clipX - edgeFade);
-    const grad = ctx.createLinearGradient(fadeLeft, 0, clipX + 4, 0);
-    grad.addColorStop(0, 'rgba(21,101,192,1)');    // background color
-    grad.addColorStop(1, 'rgba(21,101,192,0)');
-    ctx.fillStyle = grad;
-    ctx.fillRect(fadeLeft, y, clipX - fadeLeft + 4, h);
-    ctx.restore();
-  }
-
-  // Vertical ruling lines
-  const lineCount = Math.floor(w / lineSpacing);
-  ctx.save();
-  ctx.strokeStyle = 'rgba(180,180,180,0.45)';
-  ctx.lineWidth = 0.8;
-
-  // Only draw lines that are still visible (to the right of clipX)
-  for (let i = 1; i < lineCount; i++) {
-    const lx = x + i * lineSpacing;
-    if (lx < clipX - 5) continue; // already swept away
-    ctx.beginPath();
-    ctx.moveTo(lx, y + 12);
-    ctx.lineTo(lx, y + h - 12);
-    ctx.stroke();
-  }
-  ctx.restore();
-
-  // Top/bottom border lines (clip to visible part)
-  ctx.save();
-  const visLeft = Math.max(x + 10, clipX);
-  if (visLeft < x + w - 10) {
-    ctx.strokeStyle = 'rgba(200,180,160,0.5)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(visLeft, y + 12); ctx.lineTo(x + w - 10, y + 12);
-    ctx.moveTo(visLeft, y + h - 12); ctx.lineTo(x + w - 10, y + h - 12);
-    ctx.stroke();
-  }
-  ctx.restore();
-
-  // Vertical text — skip chars in triggered columns
-  const { startX, textTop, maxCharsPerCol, colWidth } = getPaperLayout();
-
-  ctx.save();
-  ctx.font = '15px "Songti SC", "SimSun", "STSong", serif';
-  ctx.fillStyle = '#333';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'top';
-
-  COLUMNS.forEach((col, ci) => {
-    const cx = startX - ci * colWidth;
-    if (cx < x + 6) return;
-    // If this column is triggered, don't draw its text
-    if (triggeredCols.has(ci)) return;
-    const chars = col.split('');
-    chars.slice(0, maxCharsPerCol).forEach((ch, ri) => {
-      ctx.fillText(ch, cx, textTop + ri * charH);
-    });
-  });
-
-  ctx.restore();
-}
-
-// ── Paper Plane ───────────────────────────────────────────────
-function drawPlane(cx, cy, scale = 1) {
-  ctx.save();
-  ctx.translate(cx, cy);
-  ctx.scale(scale, scale);
-
-  // Body — main triangle pointing right
-  ctx.beginPath();
-  ctx.moveTo(20, 0);      // nose tip (right)
-  ctx.lineTo(-16, -10);   // top rear
-  ctx.lineTo(-10, 0);     // fuselage indent
-  ctx.lineTo(-16, 10);    // bottom rear
-  ctx.closePath();
-  ctx.fillStyle = 'rgba(255,255,255,0.95)';
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(220,220,220,0.6)';
-  ctx.lineWidth = 0.8;
-  ctx.stroke();
-
-  // Wing fold line
-  ctx.beginPath();
-  ctx.moveTo(20, 0);
-  ctx.lineTo(-10, 0);
-  ctx.strokeStyle = 'rgba(180,180,180,0.7)';
-  ctx.lineWidth = 1;
-  ctx.stroke();
-
-  ctx.restore();
-}
-
-// ── Trail ─────────────────────────────────────────────────────
-const TRAIL_MAX = 120;
-const trail = [];
-
-function addTrailPoint(x, y) {
-  trail.push({ x, y });
-  while (trail.length > TRAIL_MAX) trail.shift();
-}
-
-function drawTrail() {
-  if (trail.length < 2) return;
-  ctx.save();
-  for (let i = 1; i < trail.length; i++) {
-    const alpha = (i / trail.length) * 0.45;
-    const width = (i / trail.length) * 1.4;
-    ctx.beginPath();
-    ctx.moveTo(trail[i - 1].x, trail[i - 1].y);
-    ctx.lineTo(trail[i].x, trail[i].y);
-    ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
-    ctx.lineWidth = width;
-    ctx.lineCap = 'round';
-    ctx.stroke();
-  }
-  ctx.restore();
-}
-
-// ── Animation state ───────────────────────────────────────────
-const DURATION = 5.5;   // seconds for one pass
-const OSC_AMP  = 5;     // px oscillation amplitude
-const OSC_FREQ = 1.5;   // Hz
-
-let startTime = null;
-let lastTs = null;
-
+// 贝塞尔曲线：左下 → 右上
 function getPlanePos(t) {
-  const W = canvas.width;
-  const H = canvas.height;
-
-  const x = -40 + t * (W + 80); // -40 to W+40
-
-  // Baseline arc: from y=55% to y=30%
-  const yBase = H * (0.55 - t * 0.25);
-
-  // Oscillation on top
-  const osc = Math.sin(t * DURATION * OSC_FREQ * Math.PI * 2) * OSC_AMP;
-
-  return { x, y: yBase + osc };
+  const W = canvas.width, H = canvas.height;
+  const p0 = { x: -50,      y: H * 0.65 };
+  const p1 = { x: W * 0.30, y: H * 0.45 };
+  const p2 = { x: W * 0.65, y: H * 0.28 };
+  const p3 = { x: W * 1.10, y: H * 0.18 };
+  const u = 1 - t;
+  return {
+    x: u*u*u*p0.x + 3*u*u*t*p1.x + 3*u*t*t*p2.x + t*t*t*p3.x,
+    y: u*u*u*p0.y + 3*u*u*t*p1.y + 3*u*t*t*p2.y + t*t*t*p3.y,
+  };
 }
 
-// Get trajectory Y at a given x (approximate by inverting getPlanePos)
-function getTrajectoryY(targetX) {
-  const W = canvas.width;
-  const H = canvas.height;
-  const t = (targetX + 40) / (W + 80);
-  const tClamped = Math.max(0, Math.min(1, t));
-  const yBase = H * (0.55 - tClamped * 0.25);
-  const osc = Math.sin(tClamped * DURATION * OSC_FREQ * Math.PI * 2) * OSC_AMP;
-  return yBase + osc;
+function getPlaneAngle(t) {
+  const dt = 0.0015;
+  const a = getPlanePos(Math.max(0, t - dt));
+  const b = getPlanePos(Math.min(1, t + dt));
+  return Math.atan2(b.y - a.y, b.x - a.x);
 }
 
-function resetState() {
-  trail.length = 0;
-  particles.length = 0;
-  pendingSpawns.length = 0;
-  triggeredCols.clear();
+// ─── 文字粒子 ────────────────────────────────────────────────────────────────
+let words = [];
+
+function initWords() {
+  words = [];
+  const W = canvas.width, H = canvas.height;
+  const count = 52;
+  for (let i = 0; i < count; i++) {
+    words.push({
+      char:     CHARS[Math.floor(Math.random() * CHARS.length)],
+      x:        W * 0.04 + Math.random() * W * 0.92,
+      y:        H * 0.04 + Math.random() * H * 0.92,
+      baseSize: 12 + Math.random() * 6,
+      phase:    Math.random() * Math.PI * 2,
+      // state: 'dim' | 'activating' | 'morphing' | 'moon' | 'fading'
+      state:       'dim',
+      activateTime: 0,
+      tailIndex:   -1,
+      posX: 0, posY: 0,
+      vx: 0,   vy: 0,
+      fadeStart: null,
+    });
+  }
+}
+initWords();
+
+// ─── 绘制纸飞机 ──────────────────────────────────────────────────────────────
+function drawPaperPlane(x, y, angle) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  const s = 18;
+  ctx.beginPath();
+  ctx.moveTo(s,         0);               // 机头
+  ctx.lineTo(-s * 0.7, -s * 0.55);        // 左上翼
+  ctx.lineTo(-s * 0.3,  0);               // 机身中缝
+  ctx.lineTo(-s * 0.7,  s * 0.55);        // 左下翼
+  ctx.closePath();
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(180,210,255,0.5)';
+  ctx.lineWidth = 0.8;
+  ctx.stroke();
+  // 机身折痕
+  ctx.beginPath();
+  ctx.moveTo(s, 0);
+  ctx.lineTo(-s * 0.3, 0);
+  ctx.strokeStyle = 'rgba(140,180,230,0.4)';
+  ctx.lineWidth = 0.6;
+  ctx.stroke();
+  ctx.restore();
 }
 
-// ── Main loop ─────────────────────────────────────────────────
-function frame(ts) {
-  if (!startTime) { startTime = ts; lastTs = ts; }
+// ─── 绘制月牙 ────────────────────────────────────────────────────────────────
+// 用 compositing 在 offscreen canvas 上画，避免污染主 ctx
+const offscreen = document.createElement('canvas');
+offscreen.width = 40;
+offscreen.height = 40;
+const octx = offscreen.getContext('2d');
 
-  const dt = Math.min((ts - lastTs) / 1000, 0.05); // cap at 50ms
-  lastTs = ts;
+function drawMoon(x, y, r, alpha) {
+  const S = 40;
+  octx.clearRect(0, 0, S, S);
+  const cx = S / 2, cy = S / 2;
+  // 满圆
+  octx.fillStyle = '#FFD700';
+  octx.beginPath();
+  octx.arc(cx, cy, r, 0, Math.PI * 2);
+  octx.fill();
+  // 挖月牙
+  octx.globalCompositeOperation = 'destination-out';
+  octx.fillStyle = 'rgba(0,0,0,1)';
+  octx.beginPath();
+  octx.arc(cx + r * 0.52, cy - r * 0.08, r * 0.80, 0, Math.PI * 2);
+  octx.fill();
+  octx.globalCompositeOperation = 'source-over';
 
-  const elapsed = (ts - startTime) / 1000;
-  const t = (elapsed % DURATION) / DURATION;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.drawImage(offscreen, x - cx, y - cy);
+  ctx.restore();
+}
 
-  // Reset on loop start
-  if (t < 0.01 && trail.length > 20) {
-    resetState();
+// ─── 颜色插值 ────────────────────────────────────────────────────────────────
+function lerpC(a, b, t) {
+  return [
+    a[0] + (b[0] - a[0]) * t | 0,
+    a[1] + (b[1] - a[1]) * t | 0,
+    a[2] + (b[2] - a[2]) * t | 0,
+  ];
+}
+
+// ─── 单个文字渲染 ────────────────────────────────────────────────────────────
+function drawWord(w, now) {
+  const elapsed = now - w.activateTime;
+
+  if (w.state === 'dim') {
+    const flicker = 0.07 + 0.08 * Math.sin(now * 0.0008 + w.phase);
+    ctx.save();
+    ctx.globalAlpha = flicker;
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = `${w.baseSize}px PingFang SC, Microsoft YaHei, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(w.char, w.x, w.y);
+    ctx.restore();
+    return;
   }
 
-  // Clear
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (w.state === 'activating') {
+    // 0~200ms: 暗→亮，白→金，放大1.3x
+    const p = Math.min(elapsed / 200, 1);
+    const alpha = 0.15 + 0.85 * p;
+    const col = lerpC([255,255,255], [255,215,0], p);
+    const sz = w.baseSize * (1 + 0.3 * p);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`;
+    ctx.font = `${sz}px PingFang SC, Microsoft YaHei, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(w.char, w.x, w.y);
+    ctx.restore();
+    if (p >= 1) {
+      w.state = 'morphing';
+      w.posX = w.x;
+      w.posY = w.y;
+      w.vx = 0; w.vy = 0;
+    }
+    return;
+  }
 
-  // Background
+  if (w.state === 'morphing') {
+    // 0~500ms（从 activating 结束后计）
+    const me = elapsed - 200;
+    const p = Math.min(me / 500, 1);
+    // 文字渐隐
+    ctx.save();
+    ctx.globalAlpha = 1 - p;
+    ctx.fillStyle = '#FFD700';
+    ctx.font = `${w.baseSize * (1.3 - 0.3 * p)}px PingFang SC, Microsoft YaHei, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(w.char, w.posX, w.posY);
+    ctx.restore();
+    // 月牙渐显
+    if (p > 0.2) drawMoon(w.posX, w.posY, 5 + 4 * p, (p - 0.2) / 0.8);
+    if (p >= 1) w.state = 'moon';
+    return;
+  }
+
+  if (w.state === 'moon') {
+    const wobble = 2.5 * Math.sin(now * 0.0028 + w.phase);
+    drawMoon(w.posX + wobble, w.posY + wobble * 0.4, 9, 1);
+    return;
+  }
+
+  if (w.state === 'fading') {
+    const fp = Math.min((now - w.fadeStart) / 800, 1);
+    if (fp >= 1) { w.state = 'dim'; return; }
+    const wobble = 2.5 * Math.sin(now * 0.0028 + w.phase);
+    drawMoon(w.posX + wobble, w.posY + wobble * 0.4, 9, 1 - fp);
+    return;
+  }
+}
+
+// ─── 弹簧物理 ────────────────────────────────────────────────────────────────
+function springStep(w, tx, ty, dt) {
+  const k = 7, damp = 0.86;
+  w.vx = (w.vx + (tx - w.posX) * k * dt) * damp;
+  w.vy = (w.vy + (ty - w.posY) * k * dt) * damp;
+  w.posX += w.vx;
+  w.posY += w.vy;
+}
+
+// ─── 主循环 ──────────────────────────────────────────────────────────────────
+let startTime = performance.now();
+let tailCount = 0;
+let lastTime  = performance.now();
+const ACTIVATE_RADIUS = 68;
+
+function frame(now) {
+  const dt = Math.min((now - lastTime) / 1000, 0.05);
+  lastTime = now;
+
+  const cycleLen = FLIGHT_DURATION + RESET_PAUSE;
+  const elapsed  = (now - startTime) % cycleLen;
+  const inFlight = elapsed < FLIGHT_DURATION;
+  const t = inFlight ? elapsed / FLIGHT_DURATION : 1;
+
+  const plane = getPlanePos(t);
+  const angle = getPlaneAngle(Math.min(t, 0.9995));
+  const floatY = plane.y + 3.5 * Math.sin(now * 0.0038);
+
+  // 背景
   ctx.fillStyle = '#1565C0';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // Plane position
-  const { x: px, y: py } = getPlanePos(t);
-  const plane = { x: px, y: py };
+  // 激活判断（飞行中）
+  if (inFlight) {
+    words.forEach(w => {
+      if (w.state !== 'dim') return;
+      const dx = w.x - plane.x;
+      const dy = w.y - floatY;
+      if (dx*dx + dy*dy < ACTIVATE_RADIUS * ACTIVATE_RADIUS) {
+        w.state = 'activating';
+        w.activateTime = now;
+        w.tailIndex = tailCount++;
+        w.posX = w.x;
+        w.posY = w.y;
+      }
+    });
+  }
 
-  // ── Trigger columns as plane passes ──
-  // Paper columns go right to left: ci=0 is rightmost
-  const { startX, colWidth } = getPaperLayout();
-  const TRIGGER_RADIUS = 30;
+  // 月亮跟随尾巴
+  const moons = words
+    .filter(w => w.state === 'moon')
+    .sort((a, b) => a.tailIndex - b.tailIndex);
 
-  COLUMNS.forEach((_, ci) => {
-    const cx = startX - ci * colWidth;
-    if (Math.abs(px - cx) < TRIGGER_RADIUS) {
-      triggerColumn(ci, elapsed);
-    }
+  moons.forEach((w, i) => {
+    const dist = 48 + i * 17;
+    // 找尾巴上对应的点（在飞行曲线上往前推 dist px）
+    const tBack = Math.max(0, t - dist / (canvas.width * 1.6));
+    const tp = getPlanePos(tBack);
+    const ty = tp.y + 3.5 * Math.sin(now * 0.0038 - i * 0.25);
+    springStep(w, tp.x, ty, dt);
   });
 
-  // Process stagger-delayed spawns
-  processPendingSpawns(elapsed * 1000);
-
-  // Update particles — spring toward plane slipstream
-  // Each particle has a fixed offset; target moves with plane
-  for (const p of particles) {
-    const targetX = plane.x + p.targetOffsetX;
-    const trajY = getTrajectoryY(targetX);
-    const targetY = trajY + p.targetOffsetY;
-
-    const springK = 3;
-    const damping = 0.92;
-
-    const ax = (targetX - p.x) * springK;
-    const ay = (targetY - p.y) * springK;
-
-    p.vx += ax * dt;
-    p.vy += ay * dt;
-    p.vx *= damping;
-    p.vy *= damping;
-
-    p.x += p.vx * dt;
-    p.y += p.vy * dt;
+  // 飞机飞出后：让月亮淡出
+  if (!inFlight) {
+    words.forEach(w => {
+      if ((w.state === 'moon' || w.state === 'morphing' || w.state === 'activating') && !w.fadeStart) {
+        w.state = 'fading';
+        w.fadeStart = now;
+        if (w.posX === 0 && w.posY === 0) { w.posX = w.x; w.posY = w.y; }
+      }
+    });
   }
 
-  // Remove out-of-bounds particles
-  const W = canvas.width;
-  const H = canvas.height;
-  for (let i = particles.length - 1; i >= 0; i--) {
-    const p = particles[i];
-    if (p.x > W + 120 || p.x < -120 || p.y > H + 120 || p.y < -200) {
-      particles.splice(i, 1);
-    }
+  // 循环重置
+  if (elapsed > cycleLen - 50) {
+    words.forEach(w => {
+      w.state = 'dim';
+      w.fadeStart = null;
+      w.tailIndex = -1;
+      w.posX = 0; w.posY = 0;
+      w.vx = 0;   w.vy = 0;
+    });
+    tailCount = 0;
   }
 
-  // ── Compute clipX for paper (plane's x, with some lag) ──
-  // The paper is swept away left of the plane's current x
-  const paperClipX = px;
+  // 绘制所有文字
+  words.forEach(w => drawWord(w, now));
 
-  // Letter paper (with clip mask)
-  drawPaper(paperClipX);
-
-  // Trail
-  addTrailPoint(px, py);
-  drawTrail();
-
-  // Particles (gold fragments)
-  drawParticles(elapsed);
-
-  // Plane — slight nose-up tilt based on vertical velocity
-  const tNext = Math.min(t + 0.002, 1);
-  const { y: pyNext } = getPlanePos(tNext);
-  const angle = Math.atan2(pyNext - py, canvas.width * 0.002);
-
-  ctx.save();
-  ctx.translate(px, py);
-  ctx.rotate(angle);
-  drawPlane(0, 0, 1);
-  ctx.restore();
+  // 绘制纸飞机
+  if (inFlight) drawPaperPlane(plane.x, floatY, angle);
 
   requestAnimationFrame(frame);
 }

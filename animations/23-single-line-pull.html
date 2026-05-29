@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Single Line Pull</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #1565C0;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+// ─── Physics constants ──────────────────────────────────────────────────────
+const NUM_NODES      = 15;
+const SEG_LEN        = 13;       // px between nodes, total ~182px
+const GRAVITY        = 50;       // px/s²  — very light so line floats
+const DAMPING        = 0.97;     // velocity retention per frame
+const CONSTRAINT_ITER = 10;
+const PULL_NODES     = 4;        // how many top nodes get pulled
+const RELEASE_THRESHOLD = 90;   // px top node has moved right → release bottom
+
+// ─── Plane constants ────────────────────────────────────────────────────────
+const PLANE_SPEED_FRAC = 1 / 3;  // 3 seconds to cross screen
+const PLANE_SIZE       = 30;     // px triangle
+
+// ─── State ──────────────────────────────────────────────────────────────────
+let W, H, LINE_X, LINE_TOP_Y;
+let nodes = [];
+let bottomFixed = true;
+let topFixed    = true;           // top stays until plane is close
+let released    = false;          // fully released
+
+// plane
+let planeX, planeY, planeVX;
+let attractPhase = false;         // plane near line — applying pull
+let attractDone  = false;         // bottom released
+
+// color lerp: white → gold
+let colorT = 0; // 0 = white, 1 = gold
+
+let lastTime = null;
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+function resize() {
+  W = canvas.width  = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+  LINE_X    = W * 0.45;
+  LINE_TOP_Y = H * 0.35;
+}
+
+function lerpColor(t) {
+  // white → #FFD700
+  const r = Math.round(255 + (255 - 255) * t);  // stays 255
+  const g = Math.round(255 + (215 - 255) * t);  // 255 → 215
+  const b = Math.round(255 + (0   - 255) * t);  // 255 → 0
+  return `rgb(${r},${g},${b})`;
+}
+
+function hexColor(t) {
+  const r = 255;
+  const g = Math.round(255 + (215 - 255) * t);
+  const b = Math.round(255 + (0   - 255) * t);
+  return `rgb(${r},${g},${b})`;
+}
+
+// ─── Init ────────────────────────────────────────────────────────────────────
+function initChain() {
+  nodes = [];
+  for (let i = 0; i < NUM_NODES; i++) {
+    const y = LINE_TOP_Y + i * SEG_LEN;
+    nodes.push({
+      x: LINE_X, y,
+      ox: LINE_X, oy: y,   // previous position (Verlet)
+    });
+  }
+  bottomFixed = true;
+  topFixed    = true;
+  released    = false;
+  colorT      = 0;
+}
+
+function initPlane() {
+  planeX = -PLANE_SIZE * 2;
+  planeY = LINE_TOP_Y - SEG_LEN * 1;  // fly near the top of the line
+  planeVX = W * PLANE_SPEED_FRAC;     // px/s
+  attractPhase = false;
+  attractDone  = false;
+}
+
+function reset() {
+  resize();
+  initChain();
+  initPlane();
+}
+
+// ─── Verlet step ─────────────────────────────────────────────────────────────
+function verletStep(dt) {
+  // 1. integrate
+  for (let i = 0; i < NUM_NODES; i++) {
+    const n = nodes[i];
+
+    // fixed nodes skip integration
+    if (i === 0 && topFixed) continue;
+    if (i === NUM_NODES - 1 && bottomFixed) continue;
+
+    const vx = (n.x - n.ox) * DAMPING;
+    const vy = (n.y - n.oy) * DAMPING;
+
+    n.ox = n.x;
+    n.oy = n.y;
+    n.x += vx + 0 * dt * dt;
+    n.y += vy + GRAVITY * dt * dt;
+  }
+
+  // 2. attraction toward plane tail (after release)
+  if (released) {
+    const tailX = planeX - PLANE_SIZE;
+    const tailY = planeY;
+    const ATTRACT_K = 4000; // spring constant px/s²
+    for (let i = 0; i < NUM_NODES; i++) {
+      const n = nodes[i];
+      const dx = tailX - n.x;
+      const dy = tailY - n.y;
+      const dist = Math.sqrt(dx * dx + dy * dy) + 0.001;
+      const force = Math.min(ATTRACT_K / dist, 800); // cap
+      const ax = (dx / dist) * force;
+      const ay = (dy / dist) * force;
+      // apply as position delta (Verlet-compatible)
+      n.x += ax * dt * dt;
+      n.y += ay * dt * dt;
+    }
+  } else if (attractPhase && !attractDone) {
+    // partial pull: only top PULL_NODES nodes feel pull toward plane
+    const tailX = planeX - PLANE_SIZE * 0.5;
+    const tailY = planeY;
+    for (let i = 0; i < PULL_NODES; i++) {
+      const n = nodes[i];
+      if (i === 0 && topFixed) continue;
+      const dx = tailX - n.x;
+      const dy = tailY - n.y;
+      const dist = Math.sqrt(dx * dx + dy * dy) + 0.001;
+      const force = 2000 / dist;
+      n.x += (dx / dist) * force * dt * dt;
+      n.y += (dy / dist) * force * dt * dt;
+    }
+  }
+
+  // 3. constraints
+  for (let iter = 0; iter < CONSTRAINT_ITER; iter++) {
+    for (let i = 0; i < NUM_NODES - 1; i++) {
+      const a = nodes[i];
+      const b = nodes[i + 1];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < 0.001) continue;
+      const diff = (dist - SEG_LEN) / dist;
+
+      const aFixed = (i === 0 && topFixed) || (i === 0 && false);
+      const bFixed = (i + 1 === NUM_NODES - 1 && bottomFixed);
+
+      if (!aFixed && !bFixed) {
+        a.x += dx * diff * 0.5;
+        a.y += dy * diff * 0.5;
+        b.x -= dx * diff * 0.5;
+        b.y -= dy * diff * 0.5;
+      } else if (aFixed && !bFixed) {
+        b.x -= dx * diff;
+        b.y -= dy * diff;
+      } else if (!aFixed && bFixed) {
+        a.x += dx * diff;
+        a.y += dy * diff;
+      }
+    }
+
+    // re-pin fixed nodes
+    if (topFixed) {
+      nodes[0].x = LINE_X;
+      nodes[0].y = LINE_TOP_Y;
+      nodes[0].ox = LINE_X;
+      nodes[0].oy = LINE_TOP_Y;
+    }
+    if (bottomFixed) {
+      const last = nodes[NUM_NODES - 1];
+      last.ox = last.x;
+      last.oy = last.y;
+    }
+  }
+}
+
+// ─── Draw plane ──────────────────────────────────────────────────────────────
+function drawPlane(x, y) {
+  ctx.save();
+  ctx.translate(x, y);
+  // Simple paper-plane silhouette pointing right
+  ctx.beginPath();
+  // body triangle
+  ctx.moveTo(PLANE_SIZE, 0);           // nose
+  ctx.lineTo(-PLANE_SIZE, -PLANE_SIZE * 0.5); // top wing tip
+  ctx.lineTo(-PLANE_SIZE * 0.3, 0);    // tail center
+  ctx.lineTo(-PLANE_SIZE, PLANE_SIZE * 0.5);  // bottom wing tip
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(255,255,255,0.95)';
+  ctx.fill();
+  // crease line
+  ctx.beginPath();
+  ctx.moveTo(PLANE_SIZE, 0);
+  ctx.lineTo(-PLANE_SIZE * 0.3, 0);
+  ctx.strokeStyle = 'rgba(180,210,255,0.6)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.restore();
+}
+
+// ─── Draw chain ──────────────────────────────────────────────────────────────
+function drawChain() {
+  if (nodes.length < 2) return;
+  ctx.beginPath();
+  ctx.moveTo(nodes[0].x, nodes[0].y);
+  for (let i = 1; i < NUM_NODES; i++) {
+    // smooth with quadratic bezier through midpoints
+    const mx = (nodes[i - 1].x + nodes[i].x) / 2;
+    const my = (nodes[i - 1].y + nodes[i].y) / 2;
+    ctx.quadraticCurveTo(nodes[i - 1].x, nodes[i - 1].y, mx, my);
+  }
+  ctx.lineTo(nodes[NUM_NODES - 1].x, nodes[NUM_NODES - 1].y);
+
+  ctx.strokeStyle = hexColor(colorT);
+  ctx.lineWidth   = 2;
+  ctx.lineCap     = 'round';
+  ctx.lineJoin    = 'round';
+  ctx.stroke();
+
+  // subtle glow when golden
+  if (colorT > 0.2) {
+    ctx.shadowColor = `rgba(255,215,0,${colorT * 0.5})`;
+    ctx.shadowBlur  = 8 * colorT;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.shadowColor = 'transparent';
+  }
+}
+
+// ─── Main loop ───────────────────────────────────────────────────────────────
+function frame(ts) {
+  if (!lastTime) lastTime = ts;
+  const dt = Math.min((ts - lastTime) / 1000, 0.033); // cap at 33ms
+  lastTime = ts;
+
+  // move plane
+  planeX += planeVX * dt;
+
+  // check proximity: when plane is within 80px of line x
+  const dist = planeX - LINE_X;
+  if (!attractPhase && dist > -80 && dist < 120) {
+    attractPhase = true;
+    topFixed = false; // unpin top so it can be pulled
+  }
+
+  // check if top node moved enough → release bottom
+  if (attractPhase && !attractDone) {
+    const topDx = nodes[0].x - LINE_X;
+    if (Math.abs(topDx) > RELEASE_THRESHOLD) {
+      bottomFixed = false;
+      topFixed    = false;
+      released    = true;
+      attractDone = true;
+    }
+  }
+
+  // color lerp: start fading to gold after release
+  if (released) {
+    colorT = Math.min(colorT + dt * 1.2, 1);
+  }
+
+  // physics
+  verletStep(dt);
+
+  // reset when plane exits right side
+  if (planeX > W + PLANE_SIZE * 2) {
+    reset();
+    lastTime = null;
+  }
+
+  // draw
+  ctx.clearRect(0, 0, W, H);
+  drawChain();
+  drawPlane(planeX, planeY);
+
+  requestAnimationFrame(frame);
+}
+
+// ─── Boot ────────────────────────────────────────────────────────────────────
+window.addEventListener('resize', reset);
+reset();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
