@@ -1,0 +1,83 @@
+{
+  "_doc": "动效时长预设。基于 AE/C4D/Material Design 规范。与 physics-presets.json 配合使用：physics 定义'怎么动'，timing 定义'多快动完'。",
+
+  "fly_out": {
+    "name": "元素飞出画面",
+    "duration": 0.4,
+    "easing": "cubic-bezier(0.3, 0, 1, 1)",
+    "easing_name": "ease-in (加速离开)",
+    "notes": "Material Design 退场建议：200-300ms。元素越大越慢，但不超过 500ms。"
+  },
+
+  "scatter": {
+    "name": "文字消散/飘走",
+    "perCharDuration": [0.3, 0.5],
+    "stagger": [30, 60],
+    "stagger_unit": "ms/字",
+    "totalDuration": [1.5, 3.0],
+    "easing": "cubic-bezier(0.3, 0, 0.8, 0.5)",
+    "easing_name": "ease-in with slight decel at end",
+    "speed": [150, 400],
+    "speed_unit": "px/s 初速",
+    "acceleration": [300, 500],
+    "acceleration_unit": "px/s²",
+    "notes": "C4D MoGraph stagger 默认 30-60ms/字。整体从第一个到最后一个不超过 3s。初速要明显（不是慢慢起步），加速曲线给'被风带走'的感觉。"
+  },
+
+  "explosion_burst": {
+    "name": "快速爆炸/弹飞",
+    "duration": 0.25,
+    "easing": "cubic-bezier(0.5, 0, 1, 0)",
+    "easing_name": "extreme ease-in",
+    "speed": [800, 2000],
+    "speed_unit": "px/s",
+    "notes": "AE 爆炸预设通常 6-8 帧（0.25-0.33s）。极快，几乎看不到中间过程。"
+  },
+
+  "fade_in": {
+    "name": "淡入",
+    "duration": [0.3, 0.5],
+    "easing": "cubic-bezier(0, 0, 0.2, 1)",
+    "easing_name": "ease-out (减速进入)",
+    "notes": "入场用 ease-out（减速进入视野）。Material Design: 300ms 标准。"
+  },
+
+  "fade_out": {
+    "name": "淡出",
+    "duration": [0.2, 0.4],
+    "easing": "cubic-bezier(0.3, 0, 1, 1)",
+    "easing_name": "ease-in (加速离开)",
+    "notes": "退场用 ease-in（加速离开视野）。退场比入场快。Material Design: 200ms。"
+  },
+
+  "bounce": {
+    "name": "弹性动画",
+    "duration": [0.4, 0.8],
+    "easing": "cubic-bezier(0.34, 1.56, 0.64, 1)",
+    "easing_name": "overshoot + settle",
+    "notes": "Apple 弹性效果约 0.5s。过冲 15-30% 后回弹。适合'活过来'、'弹出'的场景。"
+  },
+
+  "gentle_float": {
+    "name": "轻柔飘浮（蒲公英）",
+    "perCharDuration": [0.8, 1.5],
+    "stagger": [50, 120],
+    "stagger_unit": "ms/字",
+    "speed": [80, 200],
+    "speed_unit": "px/s",
+    "acceleration": [100, 250],
+    "acceleration_unit": "px/s²",
+    "easing": "cubic-bezier(0.2, 0, 0.6, 0.8)",
+    "easing_name": "soft ease-in",
+    "notes": "比 scatter 慢但不能太慢。关键是初速不能为 0（要有'被带走'感），但加速柔和。0.8-1.5s 飞出画面。"
+  },
+
+  "_principles": {
+    "exit_faster_than_enter": "退场动画比入场动画快 30-50%",
+    "larger_elements_slower": "大元素比小元素慢（视觉重量）",
+    "ease_in_for_exit": "退场用 ease-in（加速离开），入场用 ease-out（减速到达）",
+    "stagger_adds_life": "30-60ms 的 stagger 让动画有'活'的感觉，超过 100ms 就显得拖沓",
+    "total_under_3s": "整体动画不超过 3s，否则用户会觉得慢",
+    "randomize_10_to_20_percent": "在标准值上加 ±10-20% 随机，避免机械感"
+  }
+}
