@@ -3,330 +3,357 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>纸飞机与月亮</title>
+<title>Paper Dissolve</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
-    background: #1565C0;
-    width: 100vw;
-    height: 100vh;
-    overflow: hidden;
-  }
-  canvas {
-    display: block;
-    width: 100%;
-    height: 100%;
-  }
+  body { background: #1565C0; width: 100vw; height: 100vh; overflow: hidden; }
+  canvas { display: block; width: 100vw; height: 100vh; }
 </style>
 </head>
 <body>
-<canvas id="canvas"></canvas>
+<canvas id="c"></canvas>
 <script>
-const canvas = document.getElementById('canvas');
+const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 
-function resize() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
+let W, H;
+
+const CYCLE = 7;
+const NUM_PARTICLES = 175;
+
+function lerp(a, b, t) { return a + (b - a) * t; }
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function easeInOut(t) { return t < 0.5 ? 2*t*t : -1+(4-2*t)*t; }
+function easeOut(t) { return 1 - (1-t)*(1-t); }
+
+let particles = [];
+
+function getPaperRect() {
+  const cx = W * 0.36;
+  const cy = H * 0.5;
+  const pw = 200, ph = 350;
+  return { x: cx - pw/2, y: cy - ph/2, w: pw, h: ph };
 }
-resize();
-window.addEventListener('resize', () => { resize(); initWords(); });
 
-// ─── 文字素材 ────────────────────────────────────────────────────────────────
-const CHARS = [
-  '星','梦','风','光','影','诗','远','夜','云','月',
-  '暖','静','念','思','忆','旅','歌','画','语','心',
-  'A','B','C','D','E','F','G','H','I','J','K','L',
-  'M','N','O','P','Q','R','S','T','U','V','W','X',
-  'Y','Z','∞','★','◆','△','○'
-];
-
-// ─── 飞行参数 ────────────────────────────────────────────────────────────────
-const FLIGHT_DURATION = 6000; // ms 飞行时长
-const RESET_PAUSE = 1400;     // ms 飞出后等月亮淡完再重置
-
-// 贝塞尔曲线：左下 → 右上
-function getPlanePos(t) {
-  const W = canvas.width, H = canvas.height;
-  const p0 = { x: -50,      y: H * 0.65 };
-  const p1 = { x: W * 0.30, y: H * 0.45 };
-  const p2 = { x: W * 0.65, y: H * 0.28 };
-  const p3 = { x: W * 1.10, y: H * 0.18 };
-  const u = 1 - t;
+// Quadratic bezier arc for particle cloud: center-mid to top-right
+function getArcPoint(t) {
+  const x0 = W * 0.52, y0 = H * 0.62;
+  const x1 = W * 0.92, y1 = H * 0.08;
+  const cx = W * 0.78, cy = H * 0.18;
+  const mt = 1 - t;
   return {
-    x: u*u*u*p0.x + 3*u*u*t*p1.x + 3*u*t*t*p2.x + t*t*t*p3.x,
-    y: u*u*u*p0.y + 3*u*u*t*p1.y + 3*u*t*t*p2.y + t*t*t*p3.y,
+    x: mt*mt*x0 + 2*mt*t*cx + t*t*x1,
+    y: mt*mt*y0 + 2*mt*t*cy + t*t*y1
   };
 }
 
-function getPlaneAngle(t) {
-  const dt = 0.0015;
-  const a = getPlanePos(Math.max(0, t - dt));
-  const b = getPlanePos(Math.min(1, t + dt));
-  return Math.atan2(b.y - a.y, b.x - a.x);
+function getArcNormal(t) {
+  const eps = 0.01;
+  const p0 = getArcPoint(Math.max(0, t - eps));
+  const p1 = getArcPoint(Math.min(1, t + eps));
+  const dx = p1.x - p0.x, dy = p1.y - p0.y;
+  const len = Math.sqrt(dx*dx + dy*dy) || 1;
+  return { nx: -dy/len, ny: dx/len };
 }
 
-// ─── 文字粒子 ────────────────────────────────────────────────────────────────
-let words = [];
+function init() {
+  if (!W || !H) return;
+  particles = [];
+  const pr = getPaperRect();
 
-function initWords() {
-  words = [];
-  const W = canvas.width, H = canvas.height;
-  const count = 52;
-  for (let i = 0; i < count; i++) {
-    words.push({
-      char:     CHARS[Math.floor(Math.random() * CHARS.length)],
-      x:        W * 0.04 + Math.random() * W * 0.92,
-      y:        H * 0.04 + Math.random() * H * 0.92,
-      baseSize: 12 + Math.random() * 6,
-      phase:    Math.random() * Math.PI * 2,
-      // state: 'dim' | 'activating' | 'morphing' | 'moon' | 'fading'
-      state:       'dim',
-      activateTime: 0,
-      tailIndex:   -1,
-      posX: 0, posY: 0,
-      vx: 0,   vy: 0,
-      fadeStart: null,
+  for (let i = 0; i < NUM_PARTICLES; i++) {
+    // Birth position: distributed across paper area
+    const bx = pr.x + 15 + Math.random() * (pr.w - 30);
+    const by = pr.y + 20 + Math.random() * (pr.h - 40);
+
+    // Target position: along the arc with perpendicular spread
+    const arcT = Math.random();
+    const ap = getArcPoint(arcT);
+    const an = getArcNormal(arcT);
+    const spread = (Math.random() - 0.5) * 110;
+    const tx = ap.x + an.nx * spread;
+    const ty = ap.y + an.ny * spread;
+
+    const rx = 5 + Math.random() * 5;
+    const ry = 3 + Math.random() * 3;
+
+    // Dissolve timing: right-top dissolves first
+    const normRight = (bx - pr.x) / pr.w;
+    const normTop = 1 - (by - pr.y) / pr.h;
+    const dissolveScore = normRight * 0.6 + normTop * 0.4;
+    // birthStart in normalized cycle time: t=1/7 to t=4/7
+    const birthStart = 1/7 + (1 - dissolveScore) * (3/7);
+    const birthDur = (0.5 + Math.random() * 0.5) / 7;
+
+    const colors = ['#FFD700', '#FFD700', '#FFD700', '#FFA500', '#FFCC00'];
+    const color = colors[Math.floor(Math.random() * colors.length)];
+
+    const wobbleAmpX = 3 + Math.random() * 2;
+    const wobbleAmpY = 3 + Math.random() * 2;
+    const wobbleFreqX = 0.3 + Math.random() * 0.4;
+    const wobbleFreqY = 0.25 + Math.random() * 0.35;
+    const wobblePhaseX = Math.random() * Math.PI * 2;
+    const wobblePhaseY = Math.random() * Math.PI * 2;
+
+    const rotSpeed = 1 + Math.random() * 2;
+    const rotPhase = Math.random() * Math.PI * 2;
+
+    particles.push({
+      bx, by, tx, ty,
+      rx, ry, color,
+      birthStart, birthDur,
+      wobbleAmpX, wobbleAmpY,
+      wobbleFreqX, wobbleFreqY,
+      wobblePhaseX, wobblePhaseY,
+      rotSpeed, rotPhase
     });
   }
 }
-initWords();
 
-// ─── 绘制纸飞机 ──────────────────────────────────────────────────────────────
-function drawPaperPlane(x, y, angle) {
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.rotate(angle);
-  const s = 18;
-  ctx.beginPath();
-  ctx.moveTo(s,         0);               // 机头
-  ctx.lineTo(-s * 0.7, -s * 0.55);        // 左上翼
-  ctx.lineTo(-s * 0.3,  0);               // 机身中缝
-  ctx.lineTo(-s * 0.7,  s * 0.55);        // 左下翼
-  ctx.closePath();
-  ctx.fillStyle = '#FFFFFF';
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(180,210,255,0.5)';
-  ctx.lineWidth = 0.8;
-  ctx.stroke();
-  // 机身折痕
-  ctx.beginPath();
-  ctx.moveTo(s, 0);
-  ctx.lineTo(-s * 0.3, 0);
-  ctx.strokeStyle = 'rgba(140,180,230,0.4)';
-  ctx.lineWidth = 0.6;
-  ctx.stroke();
-  ctx.restore();
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+  init();
 }
+window.addEventListener('resize', resize);
 
-// ─── 绘制月牙 ────────────────────────────────────────────────────────────────
-// 用 compositing 在 offscreen canvas 上画，避免污染主 ctx
-const offscreen = document.createElement('canvas');
-offscreen.width = 40;
-offscreen.height = 40;
-const octx = offscreen.getContext('2d');
-
-function drawMoon(x, y, r, alpha) {
-  const S = 40;
-  octx.clearRect(0, 0, S, S);
-  const cx = S / 2, cy = S / 2;
-  // 满圆
-  octx.fillStyle = '#FFD700';
-  octx.beginPath();
-  octx.arc(cx, cy, r, 0, Math.PI * 2);
-  octx.fill();
-  // 挖月牙
-  octx.globalCompositeOperation = 'destination-out';
-  octx.fillStyle = 'rgba(0,0,0,1)';
-  octx.beginPath();
-  octx.arc(cx + r * 0.52, cy - r * 0.08, r * 0.80, 0, Math.PI * 2);
-  octx.fill();
-  octx.globalCompositeOperation = 'source-over';
-
+function drawBoat(cx, cy, alpha) {
+  const s = 0.7;
   ctx.save();
+  ctx.translate(cx, cy);
   ctx.globalAlpha = alpha;
-  ctx.drawImage(offscreen, x - cx, y - cy);
+  ctx.strokeStyle = '#fff';
+  ctx.fillStyle = 'rgba(255,255,255,0.15)';
+  ctx.lineWidth = 1.5;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+
+  // Hull
+  ctx.beginPath();
+  ctx.moveTo(-20*s, 0);
+  ctx.lineTo(-22*s, 8*s);
+  ctx.lineTo(22*s, 8*s);
+  ctx.lineTo(20*s, 0);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Main sail
+  ctx.beginPath();
+  ctx.moveTo(-2*s, 0);
+  ctx.lineTo(-2*s, -28*s);
+  ctx.lineTo(18*s, 0);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Front sail
+  ctx.beginPath();
+  ctx.moveTo(-2*s, 0);
+  ctx.lineTo(-2*s, -22*s);
+  ctx.lineTo(-18*s, 0);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
   ctx.restore();
 }
 
-// ─── 颜色插值 ────────────────────────────────────────────────────────────────
-function lerpC(a, b, t) {
-  return [
-    a[0] + (b[0] - a[0]) * t | 0,
-    a[1] + (b[1] - a[1]) * t | 0,
-    a[2] + (b[2] - a[2]) * t | 0,
-  ];
-}
+function drawPaper(t, dissolveT) {
+  const pr = getPaperRect();
+  const fadeIn = t < 1/7 ? easeOut(t / (1/7)) : 1;
 
-// ─── 单个文字渲染 ────────────────────────────────────────────────────────────
-function drawWord(w, now) {
-  const elapsed = now - w.activateTime;
+  // Draw paper as horizontal strips with individual dissolve timing
+  const strips = 50;
+  const sh = pr.h / strips;
 
-  if (w.state === 'dim') {
-    const flicker = 0.07 + 0.08 * Math.sin(now * 0.0008 + w.phase);
+  for (let i = 0; i < strips; i++) {
+    const stripNorm = 1 - i / strips; // top=1, bottom=0
+    const fadeStart = (1 - (0.4 + stripNorm * 0.6)) * 0.9;
+    const stripAlpha = clamp(1 - (dissolveT - fadeStart) / 0.3, 0, 1);
+    if (stripAlpha <= 0) continue;
+
     ctx.save();
-    ctx.globalAlpha = flicker;
-    ctx.fillStyle = '#FFFFFF';
-    ctx.font = `${w.baseSize}px PingFang SC, Microsoft YaHei, sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(w.char, w.x, w.y);
+    ctx.globalAlpha = 0.85 * stripAlpha * fadeIn;
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.fillRect(pr.x, pr.y + i * sh, pr.w, sh + 0.5);
     ctx.restore();
-    return;
   }
 
-  if (w.state === 'activating') {
-    // 0~200ms: 暗→亮，白→金，放大1.3x
-    const p = Math.min(elapsed / 200, 1);
-    const alpha = 0.15 + 0.85 * p;
-    const col = lerpC([255,255,255], [255,215,0], p);
-    const sz = w.baseSize * (1 + 0.3 * p);
+  // Horizontal ruling lines
+  ctx.strokeStyle = 'rgba(160,160,200,0.35)';
+  ctx.lineWidth = 0.8;
+  const lineSpacing = 28;
+  const numLines = Math.floor((pr.h - 60) / lineSpacing);
+  for (let i = 0; i < numLines; i++) {
+    const ly = pr.y + 50 + i * lineSpacing;
+    const lineNorm = 1 - (ly - pr.y) / pr.h;
+    const lFadeStart = (1 - (0.4 + lineNorm * 0.6)) * 0.9;
+    const lineAlpha = clamp(1 - (dissolveT - lFadeStart) / 0.3, 0, 1);
+    if (lineAlpha <= 0) continue;
     ctx.save();
-    ctx.globalAlpha = alpha;
-    ctx.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`;
-    ctx.font = `${sz}px PingFang SC, Microsoft YaHei, sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(w.char, w.x, w.y);
+    ctx.globalAlpha = 0.35 * lineAlpha * fadeIn;
+    ctx.beginPath();
+    ctx.moveTo(pr.x + 18, ly);
+    ctx.lineTo(pr.x + pr.w - 18, ly);
+    ctx.stroke();
     ctx.restore();
-    if (p >= 1) {
-      w.state = 'morphing';
-      w.posX = w.x;
-      w.posY = w.y;
-      w.vx = 0; w.vy = 0;
+  }
+
+  // Chinese text in two vertical columns
+  const col1Chars = ['亲', '爱', '的', '你', '好', '久', '不', '见'];
+  const col2Chars = ['我', '一', '直', '想', '念', '你', '平', '安'];
+  const allCols = [col1Chars, col2Chars];
+  const colXs = [pr.x + 65, pr.x + 125];
+
+  ctx.textAlign = 'center';
+  ctx.font = '15px serif';
+
+  for (let col = 0; col < 2; col++) {
+    const chars = allCols[col];
+    for (let row = 0; row < chars.length; row++) {
+      const cx2 = colXs[col];
+      const cy2 = pr.y + 55 + row * 30;
+      const charNorm = 1 - (cy2 - pr.y) / pr.h;
+      const cDissolveScore = (col === 1 ? 0.6 : 0.25) + charNorm * 0.35;
+      const cFadeStart = (1 - Math.min(cDissolveScore, 1)) * 0.85;
+      const charAlpha = clamp(1 - (dissolveT - cFadeStart) / 0.25, 0, 1);
+      if (charAlpha <= 0) continue;
+      ctx.save();
+      ctx.globalAlpha = 0.7 * charAlpha * fadeIn;
+      ctx.fillStyle = 'rgba(70,70,110,0.85)';
+      ctx.fillText(chars[row], cx2, cy2);
+      ctx.restore();
     }
-    return;
-  }
-
-  if (w.state === 'morphing') {
-    // 0~500ms（从 activating 结束后计）
-    const me = elapsed - 200;
-    const p = Math.min(me / 500, 1);
-    // 文字渐隐
-    ctx.save();
-    ctx.globalAlpha = 1 - p;
-    ctx.fillStyle = '#FFD700';
-    ctx.font = `${w.baseSize * (1.3 - 0.3 * p)}px PingFang SC, Microsoft YaHei, sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(w.char, w.posX, w.posY);
-    ctx.restore();
-    // 月牙渐显
-    if (p > 0.2) drawMoon(w.posX, w.posY, 5 + 4 * p, (p - 0.2) / 0.8);
-    if (p >= 1) w.state = 'moon';
-    return;
-  }
-
-  if (w.state === 'moon') {
-    const wobble = 2.5 * Math.sin(now * 0.0028 + w.phase);
-    drawMoon(w.posX + wobble, w.posY + wobble * 0.4, 9, 1);
-    return;
-  }
-
-  if (w.state === 'fading') {
-    const fp = Math.min((now - w.fadeStart) / 800, 1);
-    if (fp >= 1) { w.state = 'dim'; return; }
-    const wobble = 2.5 * Math.sin(now * 0.0028 + w.phase);
-    drawMoon(w.posX + wobble, w.posY + wobble * 0.4, 9, 1 - fp);
-    return;
   }
 }
 
-// ─── 弹簧物理 ────────────────────────────────────────────────────────────────
-function springStep(w, tx, ty, dt) {
-  const k = 7, damp = 0.86;
-  w.vx = (w.vx + (tx - w.posX) * k * dt) * damp;
-  w.vy = (w.vy + (ty - w.posY) * k * dt) * damp;
-  w.posX += w.vx;
-  w.posY += w.vy;
+function drawLines(boatCx, boatCy, alpha) {
+  if (alpha <= 0) return;
+  ctx.save();
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 1.5;
+  ctx.lineCap = 'round';
+
+  const boatTipX = boatCx + 14 * 0.7;
+  const boatTipY = boatCy - 20 * 0.7;
+
+  const arcTs = [0.12, 0.30, 0.50];
+
+  for (let i = 0; i < arcTs.length; i++) {
+    const ep = getArcPoint(arcTs[i]);
+    const midX = (boatTipX + ep.x) * 0.5;
+    const midY = (boatTipY + ep.y) * 0.5;
+    const cpx = midX + (i - 1) * 25;
+    const cpy = midY - 35;
+
+    ctx.globalAlpha = alpha * (0.6 + i * 0.1);
+    ctx.beginPath();
+    ctx.moveTo(boatTipX, boatTipY);
+    ctx.quadraticCurveTo(cpx, cpy, ep.x, ep.y);
+    ctx.stroke();
+  }
+
+  ctx.restore();
 }
 
-// ─── 主循环 ──────────────────────────────────────────────────────────────────
-let startTime = performance.now();
-let tailCount = 0;
-let lastTime  = performance.now();
-const ACTIVATE_RADIUS = 68;
+let lastTime = null;
+let elapsed = 0;
 
-function frame(now) {
-  const dt = Math.min((now - lastTime) / 1000, 0.05);
-  lastTime = now;
+function draw(timestamp) {
+  if (!lastTime) lastTime = timestamp;
+  const dt = (timestamp - lastTime) / 1000;
+  lastTime = timestamp;
+  elapsed += dt;
 
-  const cycleLen = FLIGHT_DURATION + RESET_PAUSE;
-  const elapsed  = (now - startTime) % cycleLen;
-  const inFlight = elapsed < FLIGHT_DURATION;
-  const t = inFlight ? elapsed / FLIGHT_DURATION : 1;
+  if (!W || !H) { requestAnimationFrame(draw); return; }
 
-  const plane = getPlanePos(t);
-  const angle = getPlaneAngle(Math.min(t, 0.9995));
-  const floatY = plane.y + 3.5 * Math.sin(now * 0.0038);
+  const t = (elapsed % CYCLE) / CYCLE;
+  const cycleSecs = t * CYCLE;
 
-  // 背景
+  ctx.clearRect(0, 0, W, H);
   ctx.fillStyle = '#1565C0';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillRect(0, 0, W, H);
 
-  // 激活判断（飞行中）
-  if (inFlight) {
-    words.forEach(w => {
-      if (w.state !== 'dim') return;
-      const dx = w.x - plane.x;
-      const dy = w.y - floatY;
-      if (dx*dx + dy*dy < ACTIVATE_RADIUS * ACTIVATE_RADIUS) {
-        w.state = 'activating';
-        w.activateTime = now;
-        w.tailIndex = tailCount++;
-        w.posX = w.x;
-        w.posY = w.y;
-      }
-    });
+  // dissolveT: 0 at t=1/7, 1 at t=4/7
+  const dissolveStart = 1/7;
+  const dissolveEnd = 4/7;
+  let dissolveT = 0;
+  if (t >= dissolveStart && t <= dissolveEnd) {
+    dissolveT = (t - dissolveStart) / (dissolveEnd - dissolveStart);
+  } else if (t > dissolveEnd) {
+    dissolveT = 1;
   }
 
-  // 月亮跟随尾巴
-  const moons = words
-    .filter(w => w.state === 'moon')
-    .sort((a, b) => a.tailIndex - b.tailIndex);
-
-  moons.forEach((w, i) => {
-    const dist = 48 + i * 17;
-    // 找尾巴上对应的点（在飞行曲线上往前推 dist px）
-    const tBack = Math.max(0, t - dist / (canvas.width * 1.6));
-    const tp = getPlanePos(tBack);
-    const ty = tp.y + 3.5 * Math.sin(now * 0.0038 - i * 0.25);
-    springStep(w, tp.x, ty, dt);
-  });
-
-  // 飞机飞出后：让月亮淡出
-  if (!inFlight) {
-    words.forEach(w => {
-      if ((w.state === 'moon' || w.state === 'morphing' || w.state === 'activating') && !w.fadeStart) {
-        w.state = 'fading';
-        w.fadeStart = now;
-        if (w.posX === 0 && w.posY === 0) { w.posX = w.x; w.posY = w.y; }
-      }
-    });
+  // Global fade out: t=5/7 to 1.0
+  const fadeOutStart = 5/7;
+  let globalFade = 1;
+  if (t >= fadeOutStart) {
+    const ft = (t - fadeOutStart) / (1 - fadeOutStart);
+    globalFade = ft < 0.65 ? 1 : 1 - easeInOut((ft - 0.65) / 0.35);
   }
 
-  // 循环重置
-  if (elapsed > cycleLen - 50) {
-    words.forEach(w => {
-      w.state = 'dim';
-      w.fadeStart = null;
-      w.tailIndex = -1;
-      w.posX = 0; w.posY = 0;
-      w.vx = 0;   w.vy = 0;
-    });
-    tailCount = 0;
+  // Boat position: moves right-upward slowly
+  const boatProg = clamp(t / (5/7), 0, 1);
+  const boatBaseX = lerp(W * 0.18, W * 0.30, easeInOut(boatProg));
+  const boatBaseY = lerp(H * 0.58, H * 0.50, easeInOut(boatProg));
+  const boatBobY = Math.sin(cycleSecs * Math.PI * 2 * 0.5) * 4;
+  const boatX = boatBaseX;
+  const boatY = boatBaseY + boatBobY;
+
+  const boatAlpha = clamp(t / (1/7), 0, 1) * globalFade;
+
+  // Draw paper
+  drawPaper(t, dissolveT);
+
+  // Draw particles
+  for (let i = 0; i < particles.length; i++) {
+    const p = particles[i];
+    if (t < p.birthStart) continue;
+
+    const birthElapsed = t - p.birthStart;
+    const birthProgress = clamp(birthElapsed / p.birthDur, 0, 1);
+
+    let px, py, palpha;
+
+    if (birthProgress < 1) {
+      const ep = easeOut(birthProgress);
+      px = lerp(p.bx, p.tx, ep);
+      py = lerp(p.by, p.ty, ep);
+      palpha = birthProgress;
+    } else {
+      const idleSecs = cycleSecs - (p.birthStart + p.birthDur) * CYCLE;
+      px = p.tx + Math.sin(idleSecs * Math.PI * 2 * p.wobbleFreqX + p.wobblePhaseX) * p.wobbleAmpX;
+      py = p.ty + Math.sin(idleSecs * Math.PI * 2 * p.wobbleFreqY + p.wobblePhaseY) * p.wobbleAmpY;
+      palpha = 1;
+    }
+
+    palpha *= globalFade;
+    if (palpha <= 0) continue;
+
+    const flipRx = Math.abs(Math.cos(cycleSecs * p.rotSpeed + p.rotPhase)) * p.rx;
+
+    ctx.save();
+    ctx.globalAlpha = palpha;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.ellipse(px, py, Math.max(0.8, flipRx), p.ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
   }
 
-  // 绘制所有文字
-  words.forEach(w => drawWord(w, now));
+  // Connecting lines
+  const linesAlpha = clamp((t - 1.2/7) / (0.5/7), 0, 1) * globalFade;
+  drawLines(boatX, boatY, linesAlpha);
 
-  // 绘制纸飞机
-  if (inFlight) drawPaperPlane(plane.x, floatY, angle);
+  // Boat
+  drawBoat(boatX, boatY, boatAlpha);
 
-  requestAnimationFrame(frame);
+  requestAnimationFrame(draw);
 }
 
-requestAnimationFrame(frame);
+resize();
+requestAnimationFrame(draw);
 </script>
 </body>
 </html>
