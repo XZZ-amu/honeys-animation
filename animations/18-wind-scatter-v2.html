@@ -47,13 +47,13 @@ const FONT_SIZE    = 19;
 const FONT         = `${FONT_SIZE}px 'Segoe Script','Caveat','Comic Sans MS',cursive`;
 
 // Timeline (seconds)
-const T_STATIC     = 1.5;   // 0 → 1.5  pure static
-const T_OMEN_END   = 1.5;   // no premonition — wind starts immediately after static
-const T_SCATTER_END= 5.5;   // 1.5 → 5.5  letters fly away (direct)
-const T_REVEAL_END = 7.0;   // 5.5 → 7.0  ByteDance color shift
-const T_FADE_START = 7.5;
-const T_FADE_END   = 8.5;
-const CYCLE        = 8.5;
+const T_STATIC     = 1.0;   // 0 → 1.0  pure static (shorter)
+const T_OMEN_END   = 1.0;   // no premonition
+const T_SCATTER_END= 3.5;   // 1.0 → 3.5  letters fly away (2.5s, faster)
+const T_REVEAL_END = 5.0;   // 3.5 → 5.0  ByteDance color shift
+const T_FADE_START = 5.5;
+const T_FADE_END   = 6.5;
+const CYCLE        = 6.5;
 
 // ─── Text lines (7 lines; ByteDance in line index 3) ─────────────────────────
 const LINES = [
@@ -189,17 +189,17 @@ class FloatingLetter {
     this.fy = letter.y;
 
     // Direction: mostly right + upward. Angle between -20° and -40° from horizontal
-    const angleDeg = -(20 + Math.random() * 25);
+    const angleDeg = -(15 + Math.random() * 25);
     const angleRad = angleDeg * Math.PI / 180;
-    const speed    = 40 + Math.random() * 55;  // px/s initial
+    const speed    = 150 + Math.random() * 200;  // px/s initial (faster start)
     this.vx = Math.cos(angleRad) * speed;
     this.vy = Math.sin(angleRad) * speed;
 
-    // Acceleration (wind pushes harder over time)
-    this.ax = 60 + Math.random() * 40;   // rightward push
-    this.ay = -8 + Math.random() * 6;    // mild upward
+    // Acceleration (wind pushes harder — ease-in feel, accelerate out)
+    this.ax = 300 + Math.random() * 200;   // rightward push (much stronger)
+    this.ay = -20 + Math.random() * 15;    // mild upward
 
-    this.drag   = 0.980 + Math.random() * 0.008;
+    this.drag   = 0.990 + Math.random() * 0.005;  // less drag so they fly further
 
     // Sway: sinusoidal lateral wobble (tumbling in wind)
     this.swayAmp   = 18 + Math.random() * 22;
