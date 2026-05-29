@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AE 表达式动效演示</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #f0f0f5;
+  font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+  overflow: hidden;
+  width: 100vw;
+  height: 100vh;
+}
+canvas {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+}
+#controls {
+  position: fixed;
+  top: 20px;
+  left: 20px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+#modeSelect {
+  appearance: none;
+  background: rgba(255,255,255,0.92);
+  border: 1px solid rgba(0,0,0,0.12);
+  border-radius: 10px;
+  padding: 10px 36px 10px 14px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #1a1a1a;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23666' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  min-width: 240px;
+}
+#modeSelect:focus { outline: none; border-color: #FF1493; }
+#modeDesc {
+  background: rgba(255,255,255,0.82);
+  border-radius: 8px;
+  padding: 7px 12px;
+  font-size: 12px;
+  color: #555;
+  max-width: 320px;
+  line-height: 1.5;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}
+#params {
+  background: rgba(255,255,255,0.72);
+  border-radius: 8px;
+  padding: 7px 12px;
+  font-size: 11px;
+  color: #888;
+  font-family: 'SF Mono', 'Monaco', monospace;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="controls">
+  <select id="modeSelect">
+    <option value="0">1. 弹跳 Bounce</option>
+    <option value="1">2. 弹性过冲 Overshoot</option>
+    <option value="2">3. 惯性滑动 Inertia</option>
+    <option value="3">4. 摆动衰减 Wiggle Decay</option>
+    <option value="4">5. 循环摆动 Oscillation</option>
+    <option value="5">6. 延迟跟随 Stagger</option>
+    <option value="6">7. 缓动对比 Easing</option>
+    <option value="7">8. 路径跟随 Path Follow</option>
+  </select>
+  <div id="modeDesc"></div>
+  <div id="params"></div>
+</div>
+
+<script>
+'use strict';
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let W, H;
+
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// ── Color palette ─────────────────────────────────────────────────────────────
+const PINK = '#FF1493';
+const PINK_ALPHA = (a) => `rgba(255,20,147,${a})`;
+const BALL_R = 10;
+
+// ── Mode registry ─────────────────────────────────────────────────────────────
+const MODES = [
+  {
+    name: '弹跳 Bounce',
+    desc: 'AE 表达式：bounce() — 模拟物理弹跳，每次反弹高度按弹性系数衰减',
+    params: 'elasticity = 0.65    gravity = 3000',
+  },
+  {
+    name: '弹性过冲 Overshoot',
+    desc: 'AE 表达式：elastic() — 目标值超过后反弹，振荡几次后收敛稳定',
+    params: 'amp = 0.3    freq = 3    decay = 6',
+  },
+  {
+    name: '惯性滑动 Inertia',
+    desc: 'AE 表达式：inertia() — 被推出后靠惯性滑行，摩擦力逐渐让它停下',
+    params: 'initialVelocity = 500    friction = 4',
+  },
+  {
+    name: '摆动衰减 Wiggle Decay',
+    desc: 'AE 表达式：wiggle() + 衰减 — 剧烈抖动后逐渐平息，回到静止',
+    params: 'freq = 12    amp = 30    decay = 4',
+  },
+  {
+    name: '循环摆动 Oscillation',
+    desc: 'AE 表达式：Math.sin(time) — 永续呼吸感摆动，无衰减',
+    params: 'amp = 40px    freq = 0.8Hz',
+  },
+  {
+    name: '延迟跟随 Stagger',
+    desc: 'AE 表达式：valueAtTime(time - index * delay) — 每个元素错开时间跟随',
+    params: 'delay = 0.1s / 球    count = 5',
+  },
+  {
+    name: '缓动对比 Easing',
+    desc: '6 条不同缓动曲线同时运动，直观感受 ease-in / ease-out / overshoot 的差异',
+    params: 'ease-out / ease-in / ease-in-out / overshoot / sharp-in / gentle-out',
+  },
+  {
+    name: '路径跟随 Path Follow',
+    desc: 'AE 表达式：pointOnPath() — 沿贝塞尔路径匀速运动，朝向自动对齐切线方向',
+    params: 'path = bezier curve    orientation = tangent',
+  },
+];
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let currentMode = 0;
+let t = 0;           // animation time in seconds
+let lastTs = null;
+let rafId = null;
+let restartTimer = null;
+
+// ── UI ────────────────────────────────────────────────────────────────────────
+const sel = document.getElementById('modeSelect');
+const descEl = document.getElementById('modeDesc');
+const paramsEl = document.getElementById('params');
+
+function updateUI() {
+  descEl.textContent = MODES[currentMode].desc;
+  paramsEl.textContent = MODES[currentMode].params;
+}
+
+sel.addEventListener('change', () => {
+  currentMode = parseInt(sel.value);
+  resetAnim();
+  updateUI();
+});
+
+updateUI();
+
+// ── Math helpers ──────────────────────────────────────────────────────────────
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function lerp(a, b, p) { return a + (b - a) * p; }
+
+// Easing functions
+const easings = {
+  'ease-out':     (t) => 1 - Math.pow(1 - t, 3),
+  'ease-in':      (t) => t * t * t,
+  'ease-in-out':  (t) => t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2,3)/2,
+  'overshoot':    (t) => { const c1=1.70158, c3=c1+1; return 1 + c3*Math.pow(t-1,3) + c1*Math.pow(t-1,2); },
+  'sharp-in':     (t) => t * t * t * t,
+  'gentle-out':   (t) => Math.sqrt(1 - Math.pow(t - 1, 2)),
+};
+const easingKeys = Object.keys(easings);
+
+// ── Bounce physics ────────────────────────────────────────────────────────────
+// Simulate analytically: time for each bounce
+function bouncePhysics(t, elasticity, gravity) {
+  // Initial drop from height H_drop
+  const H_drop = H * 0.72 - BALL_R - 2;
+  const groundY = H * 0.72;
+
+  // Time to first hit ground from H_drop: t0 = sqrt(2*H_drop / g)
+  const g = gravity;
+  const e = elasticity;
+
+  let tOff = 0; // time offset for each phase
+  let h = H_drop;
+  let phase = 0;
+
+  // Find which bounce phase we're in
+  while (true) {
+    const dur = 2 * Math.sqrt(2 * h / g);
+    if (h < 0.5) {
+      // Settled
+      return { x: W / 2, y: groundY };
+    }
+    if (t < tOff + (phase === 0 ? Math.sqrt(2*H_drop/g) : dur)) {
+      const localT = t - tOff;
+      let y;
+      if (phase === 0) {
+        // Free fall
+        y = H * 0.06 + BALL_R + 0.5 * g * localT * localT * (H_drop / (0.5 * g * (2*H_drop/g)));
+        // Normalized: start at (H*0.06+BALL_R), fall to groundY in time sqrt(2h/g)
+        const t0 = Math.sqrt(2 * H_drop / g);
+        const frac = localT / t0;
+        y = (H * 0.06 + BALL_R) + (groundY - (H * 0.06 + BALL_R)) * frac * frac;
+      } else {
+        // Bouncing: parabola up then down, peak = h
+        const halfDur = dur / 2;
+        const frac = localT / halfDur - 1; // -1 to 1
+        y = groundY - h * (1 - frac * frac);
+      }
+      return { x: W / 2, y: clamp(y, H * 0.06 + BALL_R, groundY) };
+    }
+    if (phase === 0) {
+      tOff += Math.sqrt(2 * H_drop / g);
+    } else {
+      tOff += dur;
+      h = h * e * e;
+    }
+    phase++;
+  }
+}
+
+// ── Renderers ─────────────────────────────────────────────────────────────────
+
+function drawBall(x, y, color, r, label) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(x, y, r || BALL_R, 0, Math.PI * 2);
+  ctx.fillStyle = color || PINK;
+  ctx.shadowColor = PINK_ALPHA(0.35);
+  ctx.shadowBlur = 12;
+  ctx.fill();
+  if (label) {
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#555';
+    ctx.font = '11px -apple-system, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, x + (r || BALL_R) + 6, y);
+  }
+  ctx.restore();
+}
+
+function drawGround() {
+  const groundY = H * 0.72;
+  ctx.save();
+  ctx.strokeStyle = '#ccc';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(W * 0.1, groundY);
+  ctx.lineTo(W * 0.9, groundY);
+  ctx.stroke();
+  ctx.restore();
+}
+
+// ── Mode renderers ─────────────────────────────────────────────────────────────
+
+const CYCLE = 3.5; // seconds per loop
+
+function render0_bounce(t) {
+  // Loop with 0.5s pause
+  const loopDur = CYCLE;
+  const lt = t % (loopDur + 0.5);
+  if (lt > loopDur) return; // pause
+
+  const groundY = H * 0.72;
+  drawGround();
+
+  const pos = bouncePhysics(lt, 0.65, 3000);
+  drawBall(pos.x, pos.y);
+}
+
+function render1_overshoot(t) {
+  // Elastic overshoot: x = target + A * e^(-decay*t) * cos(2π*freq*t)
+  const loopDur = 3.0;
+  const lt = t % (loopDur + 0.5);
+  if (lt > loopDur) return;
+
+  const amp = 0.3;
+  const freq = 3;
+  const decay = 6;
+  const startX = W * 0.1 + BALL_R;
+  const targetX = W * 0.5;
+
+  // Phase 1: travel from left to center (0 to 0.5s)
+  const travelDur = 0.5;
+  let x, progress;
+  if (lt < travelDur) {
+    // Ease-out travel
+    progress = lt / travelDur;
+    x = lerp(startX, targetX, 1 - Math.pow(1 - progress, 2));
+  } else {
+    const et = lt - travelDur;
+    // AE elastic expression
+    const offset = amp * Math.exp(-decay * et) * Math.cos(2 * Math.PI * freq * et);
+    x = targetX + offset * (targetX - startX);
+  }
+
+  const y = H * 0.5;
+  drawBall(clamp(x, BALL_R, W - BALL_R), y);
+}
+
+function render2_inertia(t) {
+  // x(t) = x0 + v0/friction * (1 - e^(-friction*t))
+  const loopDur = 3.0;
+  const lt = t % (loopDur + 0.5);
+  if (lt > loopDur) return;
+
+  const v0 = 500;    // px/s
+  const friction = 4;
+  const startX = W * 0.08 + BALL_R;
+  // terminal displacement = v0/friction
+  const dx = (v0 / friction) * (1 - Math.exp(-friction * lt));
+  const x = startX + dx;
+  const y = H * 0.5;
+
+  // Draw trail
+  ctx.save();
+  const grad = ctx.createLinearGradient(startX, y, x, y);
+  grad.addColorStop(0, PINK_ALPHA(0));
+  grad.addColorStop(1, PINK_ALPHA(0.08));
+  ctx.fillStyle = grad;
+  ctx.fillRect(startX, y - BALL_R, x - startX, BALL_R * 2);
+  ctx.restore();
+
+  drawBall(clamp(x, BALL_R, W - BALL_R), y);
+}
+
+function render3_wiggleDecay(t) {
+  const loopDur = 3.5;
+  const lt = t % (loopDur + 0.5);
+  if (lt > loopDur) return;
+
+  const freq = 12;
+  const amp = 80;
+  const decay = 4;
+
+  const cx = W * 0.5;
+  const cy = H * 0.5;
+
+  // Show decay envelope
+  const envelope = amp * Math.exp(-decay * lt);
+  ctx.save();
+  ctx.strokeStyle = PINK_ALPHA(0.1);
+  ctx.lineWidth = 1;
+  ctx.setLineDash([3, 4]);
+  ctx.beginPath();
+  ctx.moveTo(cx - envelope, cy);
+  ctx.lineTo(cx + envelope, cy);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+
+  const dx = envelope * Math.sin(2 * Math.PI * freq * lt);
+  const dy = envelope * Math.cos(2 * Math.PI * freq * lt) * 0.3;
+  drawBall(cx + dx, cy + dy);
+}
+
+function render4_oscillation(t) {
+  const amp = 80;
+  const freq = 0.8;
+  const cx = W * 0.5;
+  const cy = H * 0.5;
+
+  // Draw center guide
+  ctx.save();
+  ctx.strokeStyle = 'rgba(0,0,0,0.06)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 6]);
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - amp - 20);
+  ctx.lineTo(cx, cy + amp + 20);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+
+  const y = cy + amp * Math.sin(2 * Math.PI * freq * t);
+  drawBall(cx, y);
+}
+
+function render5_stagger(t) {
+  const count = 5;
+  const delay = 0.1;
+  const amp = 70;
+  const freq = 0.8;
+  const spacing = 50;
+  const cx = W * 0.5 - (count - 1) * spacing / 2;
+  const cy = H * 0.5;
+
+  for (let i = 0; i < count; i++) {
+    const localT = t - i * delay;
+    const y = cy + amp * Math.sin(2 * Math.PI * freq * localT);
+    const alpha = 0.5 + 0.5 * (i / (count - 1));
+    const color = `rgba(255,${20 + i * 28},${147 + i * 10},${alpha})`;
+    drawBall(cx + i * spacing, y, color);
+  }
+}
+
+function render6_easing(t) {
+  const loopDur = 2.5;
+  const lt = t % (loopDur + 0.8);
+  const progress = clamp(lt / loopDur, 0, 1);
+
+  const startX = W * 0.08 + BALL_R;
+  const endX = W * 0.78;
+  const rowH = (H * 0.75) / (easingKeys.length + 1);
+  const startY = H * 0.12;
+
+  // Draw track lines
+  ctx.save();
+  ctx.strokeStyle = 'rgba(0,0,0,0.07)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([3, 5]);
+  for (let i = 0; i < easingKeys.length; i++) {
+    const y = startY + (i + 0.5) * rowH;
+    ctx.beginPath();
+    ctx.moveTo(startX, y);
+    ctx.lineTo(endX, y);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  ctx.restore();
+
+  for (let i = 0; i < easingKeys.length; i++) {
+    const key = easingKeys[i];
+    const fn = easings[key];
+    const ep = fn(clamp(progress, 0, 1));
+    const x = lerp(startX, endX, ep);
+    const y = startY + (i + 0.5) * rowH;
+
+    // Hue shift per row
+    const hue = 320 + i * 10;
+    const color = `hsl(${hue}, 90%, 55%)`;
+    drawBall(x, y, color);
+
+    // Label
+    ctx.save();
+    ctx.fillStyle = '#888';
+    ctx.font = '11px -apple-system, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(key, endX + 14, y);
+    ctx.restore();
+  }
+}
+
+// Path Follow: cubic bezier path points
+function bezierPoint(p0, p1, p2, p3, t) {
+  const mt = 1 - t;
+  return {
+    x: mt*mt*mt*p0.x + 3*mt*mt*t*p1.x + 3*mt*t*t*p2.x + t*t*t*p3.x,
+    y: mt*mt*mt*p0.y + 3*mt*mt*t*p1.y + 3*mt*t*t*p2.y + t*t*t*p3.y,
+  };
+}
+function bezierTangent(p0, p1, p2, p3, t) {
+  const mt = 1 - t;
+  return {
+    x: 3*mt*mt*(p1.x-p0.x) + 6*mt*t*(p2.x-p1.x) + 3*t*t*(p3.x-p2.x),
+    y: 3*mt*mt*(p1.y-p0.y) + 6*mt*t*(p2.y-p1.y) + 3*t*t*(p3.y-p2.y),
+  };
+}
+
+function render7_pathFollow(t) {
+  const loopDur = 4.0;
+  const lt = t % (loopDur + 0.5);
+  const progress = clamp(lt / loopDur, 0, 1);
+
+  // Define a nice S-curve path
+  const p0 = { x: W * 0.1, y: H * 0.7 };
+  const p1 = { x: W * 0.3, y: H * 0.15 };
+  const p2 = { x: W * 0.7, y: H * 0.82 };
+  const p3 = { x: W * 0.9, y: H * 0.28 };
+
+  // Draw path (dashed)
+  ctx.save();
+  ctx.strokeStyle = 'rgba(0,0,0,0.12)';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([5, 6]);
+  ctx.beginPath();
+  ctx.moveTo(p0.x, p0.y);
+  ctx.bezierCurveTo(p1.x, p1.y, p2.x, p2.y, p3.x, p3.y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+
+  // Draw start/end dots
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.15)';
+  ctx.beginPath(); ctx.arc(p0.x, p0.y, 4, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(p3.x, p3.y, 4, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  // Draw trail
+  const trailLen = 0.08;
+  const trailStart = Math.max(0, progress - trailLen);
+  ctx.save();
+  const steps = 40;
+  ctx.beginPath();
+  for (let s = 0; s <= steps; s++) {
+    const tp = trailStart + (progress - trailStart) * (s / steps);
+    const pt = bezierPoint(p0, p1, p2, p3, tp);
+    if (s === 0) ctx.moveTo(pt.x, pt.y);
+    else ctx.lineTo(pt.x, pt.y);
+  }
+  ctx.strokeStyle = PINK_ALPHA(0.25);
+  ctx.lineWidth = 3;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+  ctx.restore();
+
+  // Ball position & orientation
+  const pos = bezierPoint(p0, p1, p2, p3, progress);
+  const tan = bezierTangent(p0, p1, p2, p3, progress);
+  const angle = Math.atan2(tan.y, tan.x);
+
+  // Draw oriented ball (elongated in direction of travel)
+  ctx.save();
+  ctx.translate(pos.x, pos.y);
+  ctx.rotate(angle);
+  ctx.beginPath();
+  ctx.ellipse(0, 0, BALL_R * 1.4, BALL_R * 0.75, 0, 0, Math.PI * 2);
+  ctx.fillStyle = PINK;
+  ctx.shadowColor = PINK_ALPHA(0.35);
+  ctx.shadowBlur = 12;
+  ctx.fill();
+  ctx.restore();
+}
+
+// ── Reset animation ────────────────────────────────────────────────────────────
+function resetAnim() {
+  t = 0;
+  lastTs = null;
+  if (restartTimer) clearTimeout(restartTimer);
+}
+
+// ── Main loop ─────────────────────────────────────────────────────────────────
+const renderers = [
+  render0_bounce,
+  render1_overshoot,
+  render2_inertia,
+  render3_wiggleDecay,
+  render4_oscillation,
+  render5_stagger,
+  render6_easing,
+  render7_pathFollow,
+];
+
+function frame(ts) {
+  if (lastTs === null) lastTs = ts;
+  const dt = Math.min((ts - lastTs) / 1000, 0.05); // cap dt at 50ms
+  lastTs = ts;
+  t += dt;
+
+  // Clear
+  ctx.clearRect(0, 0, W, H);
+
+  // BG
+  ctx.fillStyle = '#f0f0f5';
+  ctx.fillRect(0, 0, W, H);
+
+  // Render current mode
+  renderers[currentMode](t);
+
+  rafId = requestAnimationFrame(frame);
+}
+
+rafId = requestAnimationFrame(frame);
+</script>
+</body>
+</html>
