@@ -48,12 +48,12 @@ const FONT         = `${FONT_SIZE}px 'Segoe Script','Caveat','Comic Sans MS',cur
 
 // Timeline (seconds)
 const T_STATIC     = 1.5;   // 0 → 1.5  pure static
-const T_OMEN_END   = 2.0;   // 1.5 → 2.0  all-text premonition lean
-const T_SCATTER_END= 6.0;   // 2.0 → 6.0  letters fly away
-const T_REVEAL_END = 7.5;   // 6.0 → 7.5  ByteDance color shift
-const T_FADE_START = 8.0;
-const T_FADE_END   = 9.0;
-const CYCLE        = 9.0;
+const T_OMEN_END   = 1.5;   // no premonition — wind starts immediately after static
+const T_SCATTER_END= 5.5;   // 1.5 → 5.5  letters fly away (direct)
+const T_REVEAL_END = 7.0;   // 5.5 → 7.0  ByteDance color shift
+const T_FADE_START = 7.5;
+const T_FADE_END   = 8.5;
+const CYCLE        = 8.5;
 
 // ─── Text lines (7 lines; ByteDance in line index 3) ─────────────────────────
 const LINES = [
@@ -227,8 +227,10 @@ class FloatingLetter {
 
     if (this.phase === 'static') {
       if (cycleTime >= this.depT) {
-        this.phase = 'pulling';
-        this.pullT = 0;
+        this.phase = 'flying';
+        this.pullOffset = 0;
+        this.fx = this.l.x;
+        this.fy = this.l.y;
       }
       return;
     }
@@ -333,8 +335,9 @@ class StableLetter {
     if (!this.wobbled && cycleTime >= this.windArrival) {
       this.wobbled = true;
       this.wobbleT = 0;
+      this.flying = true; // skip wobble, start flying immediately
     }
-    if (this.wobbled && this.wobbleT < this.wobbleDur) {
+    if (this.wobbled && !this.flying && this.wobbleT < this.wobbleDur) {
       this.wobbleT += dt;
       const t = this.wobbleT / this.wobbleDur;
       // tiny rightward nudge then return — very subtle
@@ -471,17 +474,6 @@ function tick(ts) {
     ctx.textBaseline = 'alphabetic';
     ctx.fillStyle = INK;
     letters.forEach(l => ctx.fillText(l.ch, l.x, l.y));
-
-  } else if (cycleTime < T_OMEN_END) {
-    // Premonition: all text leans slightly right + trembles
-    const lean = leanOffset(cycleTime);
-    ctx.font = FONT;
-    ctx.textBaseline = 'alphabetic';
-    ctx.fillStyle = INK;
-    // Draw all non-BD letters with lean
-    floaters.forEach(f => ctx.fillText(f.l.ch, f.l.x + lean, f.l.y));
-    // ByteDance gets only a tiny fraction of the lean (it's anchored)
-    stables.forEach(s => ctx.fillText(s.l.ch, s.l.x + lean * 0.15, s.l.y));
 
   } else {
     // Scatter + reveal phases
