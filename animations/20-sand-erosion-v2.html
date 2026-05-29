@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Wind Scatter v2 – ByteDance</title>
+<title>Sand Erosion v2 – ByteDance</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -82,8 +82,42 @@ function lerpColor(a, b, t) {
   return `rgb(${Math.round(r1+(r2-r1)*t)},${Math.round(g1+(g2-g1)*t)},${Math.round(b1+(b2-b1)*t)})`;
 }
 
+// ─── Off-screen canvas for pixel sampling ─────────────────────────────────────
+const offCanvas = document.createElement('canvas');
+offCanvas.width  = 64;
+offCanvas.height = 40;
+const offCtx = offCanvas.getContext('2d');
+
+// Sample a letter's pixels and return array of {ox, oy} offsets relative to
+// the letter's anchor point (x, y-FONT_SIZE). Sampling step 2px for ~50-80 grains.
+function sampleLetterGrains(ch, STEP) {
+  const step = STEP || 2;
+  offCtx.clearRect(0, 0, offCanvas.width, offCanvas.height);
+  offCtx.font = FONT;
+  offCtx.textBaseline = 'alphabetic';
+  offCtx.fillStyle = '#000';
+  // Draw at (4, FONT_SIZE+4) so we don't clip ascenders
+  const drawX = 4;
+  const drawY = FONT_SIZE + 4;
+  offCtx.fillText(ch, drawX, drawY);
+
+  const imgData = offCtx.getImageData(0, 0, offCanvas.width, offCanvas.height);
+  const grains = [];
+  for (let py = 0; py < offCanvas.height; py += step) {
+    for (let px = 0; px < offCanvas.width; px += step) {
+      const idx = (py * offCanvas.width + px) * 4;
+      const alpha = imgData.data[idx + 3];
+      if (alpha > 80) {
+        // ox/oy relative to letter anchor (l.x, l.y)
+        grains.push({ ox: px - drawX, oy: py - drawY });
+      }
+    }
+  }
+  return grains;
+}
+
 // ─── Measure all letter positions ────────────────────────────────────────────
-let letters = [];   // { ch, x, y, w, isBD, row, col, edginess, sparseness }
+let letters = [];   // { ch, x, y, w, isBD, row, col, edginess, sparseness, grains }
 
 function measureLetters() {
   ctx.font = FONT;
@@ -100,61 +134,48 @@ function measureLetters() {
       const isBD = (row === BD_LINE) && bdStart !== -1 && col >= bdStart && col < bdStart + BD_WORD.length;
 
       // "grip" factors: higher = harder to blow away
-      // edginess: chars near line edges are easier to blow
       const lineW = ctx.measureText(line).width;
       const posInLine = (curX - MARGIN_LEFT) / lineW;
-      const edginess = posInLine > 0.5 ? posInLine : (1 - posInLine); // 0=center, 1=edge
-      // sparseness: simple chars (space, comma, period) are lighter
+      const edginess = posInLine > 0.5 ? posInLine : (1 - posInLine);
       const sparse = /[.,!?; ]/.test(ch) ? 1 : 0;
 
-      letters.push({ ch, x: curX, y: baseY, w, isBD, row, col, edginess, sparse });
+      // Sample pixel grains for this letter
+      // Space gets 0 grains (invisible)
+      const step = (ch === ' ') ? 99 : 2;
+      const grains = sampleLetterGrains(ch, step);
+
+      letters.push({ ch, x: curX, y: baseY, w, isBD, row, col, edginess, sparse, grains });
       curX += w;
     }
   });
 }
 
 // ─── Wind burst schedule ──────────────────────────────────────────────────────
-// Three "gusts" during scatter phase: weak, medium, strong
-// Each gust releases a batch of letters
-// gust = { time, strength }   strength 0..1
 const GUSTS = [
-  { time: 2.0, strength: 0.15 },   // first tendrils
+  { time: 2.0, strength: 0.15 },
   { time: 2.7, strength: 0.30 },
   { time: 3.3, strength: 0.45 },
   { time: 3.9, strength: 0.70 },
   { time: 4.4, strength: 0.85 },
-  { time: 4.9, strength: 1.00 },   // final sweep
+  { time: 4.9, strength: 1.00 },
 ];
 
 // ─── Assign departure delays ──────────────────────────────────────────────────
-// Each non-BD letter is assigned a departure time based on:
-//   - edginess (higher = departs earlier)
-//   - sparse (punctuation/spaces depart earlier)
-//   - small random noise
-//   - slight left-to-right bias (wind arrives left first)
-// Returns array of { letterIndex, departureTime }
 function buildSchedule(nonBDLetters) {
-  // score: lower score = departs earlier
   const scored = nonBDLetters.map((l, i) => {
-    const leftBias = (l.x - MARGIN_LEFT) / (W - MARGIN_LEFT); // 0=left, 1=right
+    const leftBias = (l.x - MARGIN_LEFT) / (W - MARGIN_LEFT);
     const grip = (1 - l.edginess) * 0.5 + (l.sparse ? 0 : 0.3) + leftBias * 0.2;
-    // grip ~0..1, lower = weaker grip = flies sooner
     const score = grip + Math.random() * 0.3;
     return { idx: i, score, letter: l };
   });
   scored.sort((a, b) => a.score - b.score);
 
-  // Map sorted order to departure times
-  // distribute across scatter phase with gust rhythm
   const n = scored.length;
   const result = new Array(n);
   scored.forEach((item, rank) => {
-    const frac = rank / (n - 1);  // 0..1
-    // distribute with acceleration: early letters are sparse, late letters dense
-    // use sqrt to push more letters to the end (big final rush)
+    const frac = rank / (n - 1);
     const tFrac = Math.pow(frac, 0.7);
     const base = T_OMEN_END + tFrac * (T_SCATTER_END - T_OMEN_END - 1.0);
-    // Add gust "snapping": snap to nearest gust ± small random window
     const snap = gustSnap(base);
     result[item.idx] = snap;
   });
@@ -162,13 +183,11 @@ function buildSchedule(nonBDLetters) {
 }
 
 function gustSnap(t) {
-  // Find nearest gust and pull toward it slightly
   let nearest = GUSTS[0], minD = Infinity;
   for (const g of GUSTS) {
     const d = Math.abs(g.time - t);
     if (d < minD) { minD = d; nearest = g; }
   }
-  // Blend: 40% snap to gust, 60% original time
   const snapped = nearest.time + (Math.random() - 0.5) * 0.35;
   return 0.4 * snapped + 0.6 * t;
 }
@@ -178,48 +197,60 @@ class FloatingLetter {
   constructor(letter, departureTime) {
     this.l      = letter;
     this.depT   = departureTime;
-    this.phase  = 'static';   // static | pulling | flying | gone
-
-    // pulling phase: letter gets tugged back and forth before releasing
-    this.pullT   = 0;
-    this.pullDur = 0.18 + Math.random() * 0.14;  // 0.18–0.32s
+    this.phase  = 'static';   // static | flying | gone
 
     // flight physics
     this.fx = letter.x;
     this.fy = letter.y;
 
-    // Direction: mostly right + upward. Angle between -20° and -40° from horizontal
     const angleDeg = -(15 + Math.random() * 25);
     const angleRad = angleDeg * Math.PI / 180;
-    const speed    = 150 + Math.random() * 200;  // px/s initial (faster start)
+    const speed    = 150 + Math.random() * 200;
     this.vx = Math.cos(angleRad) * speed;
     this.vy = Math.sin(angleRad) * speed;
 
-    // Acceleration (wind pushes harder — ease-in feel, accelerate out)
-    this.ax = 300 + Math.random() * 200;   // rightward push (much stronger)
-    this.ay = -20 + Math.random() * 15;    // mild upward
+    this.ax = 300 + Math.random() * 200;
+    this.ay = -20 + Math.random() * 15;
+    this.drag   = 0.990 + Math.random() * 0.005;
 
-    this.drag   = 0.990 + Math.random() * 0.005;  // less drag so they fly further
-
-    // Sway: sinusoidal lateral wobble (tumbling in wind)
     this.swayAmp   = 18 + Math.random() * 22;
     this.swayFreq  = 0.4 + Math.random() * 0.5;
     this.swayPhase = Math.random() * Math.PI * 2;
 
-    // Rotation
     this.rot      = 0;
     this.rotSpeed = (Math.random() - 0.5) * 2.2;
+    this.scale    = 1;
+    this.flyT     = 0;
+    this.flyDur   = 2.0 + Math.random() * 1.0;
 
-    // Scale (shrink as it flies away for depth)
-    this.scale = 1;
+    // ── Sand grain state ──────────────────────────────────────────────────────
+    // Each grain: { ox, oy, releaseProgress, released, detached: { x, y, vx, vy, alpha, life, maxLife } }
+    const rawGrains = letter.grains;
+    const charW = Math.max(letter.w || 1, 1);
 
-    // Alpha
-    this.alpha   = 1;
-    this.flyT    = 0;
-    this.flyDur  = 2.0 + Math.random() * 1.0;
+    // Compute x range for normalization
+    let minOx = Infinity, maxOx = -Infinity;
+    for (const g of rawGrains) {
+      if (g.ox < minOx) minOx = g.ox;
+      if (g.ox > maxOx) maxOx = g.ox;
+    }
+    const oxRange = Math.max(maxOx - minOx, 1);
 
-    // pull offset
-    this.pullOffset = 0;
+    this.grains = rawGrains.map(g => {
+      // Left-to-right: leftmost ox releases first (releaseProgress near 0)
+      const normOx = (g.ox - minOx) / oxRange; // 0=leftmost, 1=rightmost
+      // Add ±20% random jitter
+      const rp = Math.max(0, Math.min(1, normOx + (Math.random() - 0.5) * 0.4));
+      return {
+        ox: g.ox,
+        oy: g.oy,
+        releaseProgress: rp,
+        released: false,
+        detached: null,
+      };
+    });
+
+    this.allGone = false;
   }
 
   update(dt, cycleTime) {
@@ -228,27 +259,6 @@ class FloatingLetter {
     if (this.phase === 'static') {
       if (cycleTime >= this.depT) {
         this.phase = 'flying';
-        this.pullOffset = 0;
-        this.fx = this.l.x;
-        this.fy = this.l.y;
-      }
-      return;
-    }
-
-    if (this.phase === 'pulling') {
-      this.pullT += dt;
-      const t = this.pullT / this.pullDur;
-      // Letter gets pulled rightward in increasing jerks:
-      // - 0–33%: snap right (+4px), back to 0
-      // - 33–66%: snap right more (+7px), back to 0
-      // - 66–100%: snap right hard (+10px) and hold → release into flying
-      // Achieved with an envelope of sin pulses biased positive
-      const jerk = Math.abs(Math.sin(t * Math.PI * 3)) * t * 10;
-      // Bias the jerk rightward (no leftward component)
-      this.pullOffset = jerk;
-      if (this.pullT >= this.pullDur) {
-        this.phase = 'flying';
-        this.pullOffset = 0;
         this.fx = this.l.x;
         this.fy = this.l.y;
       }
@@ -258,96 +268,75 @@ class FloatingLetter {
     if (this.phase === 'flying') {
       this.flyT += dt;
 
-      // Accelerate over first 0.5s
       const accelPhase = Math.min(this.flyT / 0.5, 1);
       const ax = this.ax * accelPhase;
 
-      // Physics
       this.vx += ax * dt;
       this.vy += this.ay * dt;
       this.vx *= this.drag;
       this.vy *= this.drag;
 
-      // Sway (lateral tumbling perpendicular to main motion)
       const swayMag = this.swayAmp * Math.sin(this.swayFreq * this.flyT * Math.PI * 2 + this.swayPhase);
-      // Sway is mostly vertical (letter bobs up/down as it flies right)
       const swayVY = swayMag * 25;
 
       this.fx += this.vx * dt;
       this.fy += (this.vy + swayVY * dt) * dt;
 
       this.rot   += this.rotSpeed * dt;
+      this.scale  = Math.max(0.3, 1 - this.flyT * 0.15);
 
-      // Scale: shrink slightly as it flies far
-      this.scale = Math.max(0.3, 1 - this.flyT * 0.15);
+      // flyProgress 0→1 drives grain release
+      const flyProgress = Math.min(this.flyT / this.flyDur, 1);
 
-      // Sand disintegration: after 40% of flight, letter starts crumbling from its edges
-      const sandStart = this.flyDur * 0.4;
-      if (this.flyT > sandStart && !this.sanding) {
-        this.sanding = true;
-        this.sandParticles = [];
-        // Pre-generate sand grain positions covering the letter's body
-        // Sample points across the letter's bounding box
-        const charW = this.l.w || FONT_SIZE * 0.6;
-        const charH = FONT_SIZE;
-        this.sandGrains = [];
-        const grainCount = 60 + Math.floor(Math.random() * 30); // 60-90 grains per letter
-        for (let g = 0; g < grainCount; g++) {
-          const ox = (Math.random() - 0.5) * charW;
-          const oy = (Math.random() - 0.5) * charH;
-          // Left side (windward) releases first: normalize ox to 0-1 where 0=leftmost
-          const windExposure = (ox / charW) + 0.5; // 0=left edge, 1=right edge
-          const releaseProgress = windExposure * 0.7 + Math.random() * 0.3; // left goes first + randomness
-          this.sandGrains.push({
-            ox,
-            oy,
-            released: false,
-            releaseProgress: Math.min(releaseProgress, 1),
-          });
-        }
-      }
-      if (this.sanding) {
-        const sandProgress = (this.flyT - sandStart) / (this.flyDur - sandStart); // 0→1
+      let attachedCount = 0;
+      let anyActive = false;
 
-        // Release grains progressively from edges inward
-        // (grains with larger offset from center release first)
-        for (const grain of this.sandGrains) {
-          if (!grain.released && sandProgress >= grain.releaseProgress) {
+      for (const grain of this.grains) {
+        if (!grain.released) {
+          // Check if this grain should detach
+          if (flyProgress >= grain.releaseProgress) {
             grain.released = true;
-            // Grain starts at its position on the letter
+            // Grain world position when it detaches (based on letter's current pos + rotation)
             const cx = this.fx + this.l.w / 2;
-            const cy = this.fy - FONT_SIZE * 0.45;
-            this.sandParticles.push({
-              x: cx + grain.ox * this.scale,
-              y: cy + grain.oy * this.scale,
-              vx: this.vx * 0.4 + 40 + Math.random() * 50,
-              vy: (Math.random() - 0.5) * 30,
-              size: 0.8 + Math.random() * 0.5, // very small: 0.8-1.3px
-              alpha: 0.85,
+            const cy = this.fy;
+            // Apply rotation + scale to get grain world pos
+            const cosR = Math.cos(this.rot);
+            const sinR = Math.sin(this.rot);
+            const gox = grain.ox * this.scale;
+            const goy = grain.oy * this.scale;
+            const wx = cx + cosR * gox - sinR * goy;
+            const wy = cy + sinR * gox + cosR * goy;
+            grain.detached = {
+              x: wx,
+              y: wy,
+              vx: this.vx * 0.3 + 200 + Math.random() * 200, // blast rightward
+              vy: (Math.random() - 0.5) * 40,
+              alpha: 0.9,
               life: 0,
-              maxLife: 0.25 + Math.random() * 0.3, // disappear quickly
-            });
+              maxLife: 0.2 + Math.random() * 0.2,
+            };
+          } else {
+            attachedCount++;
           }
         }
 
-        // Update sand particles
-        for (let s = this.sandParticles.length - 1; s >= 0; s--) {
-          const sp = this.sandParticles[s];
-          sp.life += dt;
-          sp.x += sp.vx * dt;
-          sp.y += sp.vy * dt;
-          sp.vx *= 0.97;
-          sp.vy *= 0.97;
-          sp.alpha = Math.max(0, 0.9 * (1 - sp.life / sp.maxLife));
-          if (sp.life >= sp.maxLife) this.sandParticles.splice(s, 1);
+        // Update detached grains
+        if (grain.detached) {
+          const d = grain.detached;
+          d.life += dt;
+          d.x += d.vx * dt;
+          d.y += d.vy * dt;
+          d.vx *= 0.96;
+          d.vy *= 0.97;
+          d.alpha = Math.max(0, 0.9 * (1 - d.life / d.maxLife));
+          if (d.life < d.maxLife) anyActive = true;
         }
-
-        // Letter itself becomes more transparent as grains break off
-        const releasedCount = this.sandGrains.filter(g => g.released).length;
-        this.alpha = Math.max(0, 1 - (releasedCount / this.sandGrains.length));
       }
 
-      if (this.flyT >= this.flyDur || (this.sanding && this.alpha <= 0 && this.sandParticles.length === 0) || this.fx > W + 100) {
+      if (attachedCount === 0 && !anyActive) {
+        this.phase = 'gone';
+      }
+      if (this.fx > W + 100) {
         this.phase = 'gone';
       }
     }
@@ -356,32 +345,38 @@ class FloatingLetter {
   draw(ctx) {
     if (this.phase === 'gone') return;
     ctx.save();
-    ctx.font = FONT;
-    ctx.textBaseline = 'alphabetic';
-    ctx.fillStyle = INK;
 
     if (this.phase === 'static') {
-      ctx.fillText(this.l.ch, this.l.x, this.l.y);
-    } else if (this.phase === 'pulling') {
-      ctx.fillText(this.l.ch, this.l.x + this.pullOffset, this.l.y);
-    } else if (this.phase === 'flying') {
-      // Draw letter (fading as sand takes over)
-      if (this.alpha > 0.01) {
-        ctx.globalAlpha = Math.max(0, this.alpha);
-        const cx = this.fx + this.l.w / 2;
-        const cy = this.fy - FONT_SIZE * 0.45;
-        ctx.translate(cx, cy);
-        ctx.rotate(this.rot);
-        ctx.scale(this.scale, this.scale);
-        ctx.fillText(this.l.ch, -this.l.w / 2, FONT_SIZE * 0.45);
-        ctx.setTransform(1,0,0,1,0,0); // reset transform for sand
+      // Draw attached grains at rest position
+      ctx.fillStyle = INK;
+      ctx.globalAlpha = 1;
+      for (const grain of this.grains) {
+        ctx.fillRect(this.l.x + grain.ox, this.l.y + grain.oy, 1, 1);
       }
-      // Draw sand particles (tiny squares, faster than arcs)
-      if (this.sandParticles && this.sandParticles.length > 0) {
-        ctx.fillStyle = INK;
-        for (const sp of this.sandParticles) {
-          ctx.globalAlpha = sp.alpha;
-          ctx.fillRect(sp.x, sp.y, sp.size, sp.size);
+
+    } else if (this.phase === 'flying') {
+      const cx = this.fx + this.l.w / 2;
+      const cy = this.fy;
+
+      const cosR = Math.cos(this.rot);
+      const sinR = Math.sin(this.rot);
+
+      ctx.fillStyle = INK;
+      ctx.globalAlpha = 1;
+
+      for (const grain of this.grains) {
+        if (!grain.released) {
+          // Attached grain: follow letter with rotation + scale
+          const gox = grain.ox * this.scale;
+          const goy = grain.oy * this.scale;
+          const wx = cx + cosR * gox - sinR * goy;
+          const wy = cy + sinR * gox + cosR * goy;
+          ctx.fillRect(wx, wy, 1, 1);
+        } else if (grain.detached && grain.detached.alpha > 0.01) {
+          // Detached grain flying away
+          ctx.globalAlpha = grain.detached.alpha;
+          ctx.fillRect(grain.detached.x, grain.detached.y, 1, 1);
+          ctx.globalAlpha = 1;
         }
       }
     }
@@ -397,8 +392,6 @@ class StableLetter {
     this.wobbleT   = 0;
     this.wobbleDur = 0.25;
     this.offset    = 0;
-    // Wind arrives at this letter's position at around T_OMEN_END
-    // (slight left-to-right delay across BD word)
     const relX = (letter.x - MARGIN_LEFT) / (W - MARGIN_LEFT);
     this.windArrival = T_OMEN_END + relX * 0.15;
   }
@@ -407,12 +400,11 @@ class StableLetter {
     if (!this.wobbled && cycleTime >= this.windArrival) {
       this.wobbled = true;
       this.wobbleT = 0;
-      this.flying = true; // skip wobble, start flying immediately
+      this.flying = true;
     }
     if (this.wobbled && !this.flying && this.wobbleT < this.wobbleDur) {
       this.wobbleT += dt;
       const t = this.wobbleT / this.wobbleDur;
-      // tiny rightward nudge then return — very subtle
       this.offset = Math.sin(t * Math.PI * 5) * 1.5 * (1 - t);
     } else {
       this.offset = 0;
@@ -421,11 +413,18 @@ class StableLetter {
 
   draw(ctx, colorProgress) {
     ctx.save();
-    ctx.font = FONT;
-    ctx.textBaseline = 'alphabetic';
-    ctx.fillStyle   = lerpColor(INK, BD_COLOR, colorProgress);
+    const color = lerpColor(INK, BD_COLOR, colorProgress);
     ctx.globalAlpha = 1;
-    ctx.fillText(this.l.ch, this.l.x + this.offset, this.l.y);
+
+    // Draw grains (never detach, always at rest position + wobble offset)
+    ctx.fillStyle = color;
+    for (const grain of this.l.grains) {
+      ctx.fillRect(
+        this.l.x + this.offset + grain.ox,
+        this.l.y + grain.oy,
+        1, 1
+      );
+    }
     ctx.restore();
   }
 }
@@ -456,7 +455,6 @@ function drawNotebook() {
   ctx.fillStyle = PAPER_COLOR;
   ctx.fillRect(0, 0, W, H);
 
-  // Horizontal lines
   ctx.strokeStyle = LINE_COLOR;
   ctx.lineWidth   = 1;
   for (let y = MARGIN_TOP + LINE_SPACING; y < H - 8; y += LINE_SPACING) {
@@ -466,7 +464,6 @@ function drawNotebook() {
     ctx.stroke();
   }
 
-  // Left red margin
   ctx.strokeStyle = RED_LINE;
   ctx.lineWidth   = 1.5;
   ctx.beginPath();
@@ -476,18 +473,13 @@ function drawNotebook() {
 }
 
 // ─── Global premonition effect ────────────────────────────────────────────────
-// When wind arrives (1.5–2s), all static letters tilt slightly right
-// Returns lean offset (pixels) based on cycle time
 function leanOffset(cycleTime) {
   if (cycleTime < T_STATIC) return 0;
   if (cycleTime >= T_OMEN_END) return 0;
-  const t = (cycleTime - T_STATIC) / (T_OMEN_END - T_STATIC); // 0..1
-  // Ramp up fast then ease out — like a gust of air that builds and then settles
-  // easeInQuad shape: fast rise, slow return
+  const t = (cycleTime - T_STATIC) / (T_OMEN_END - T_STATIC);
   const lean = t < 0.6
-    ? (t / 0.6) * 3.0                               // ramp up to 3px rightward
-    : 3.0 * (1 - (t - 0.6) / 0.4);                 // ramp back down
-  // High-frequency tremor that fades out
+    ? (t / 0.6) * 3.0
+    : 3.0 * (1 - (t - 0.6) / 0.4);
   const tremor = Math.sin(t * Math.PI * 28) * 0.9 * (1 - t);
   return lean + tremor;
 }
@@ -503,13 +495,11 @@ function tick(ts) {
   lastTS = ts;
   cycleTime += rawDt;
 
-  // Reset
   if (cycleTime >= CYCLE) {
     cycleTime -= CYCLE;
     buildParticles();
   }
 
-  // Page alpha (fade in at cycle start, fade out at end)
   if (cycleTime < 0.35) {
     pageAlpha = cycleTime / 0.35;
   } else if (cycleTime < T_FADE_START) {
@@ -520,12 +510,10 @@ function tick(ts) {
     pageAlpha = 0;
   }
 
-  // Update particles (only during scatter + reveal phases)
   const dt = (cycleTime >= T_STATIC) ? rawDt : 0;
   floaters.forEach(f => f.update(dt, cycleTime));
   stables.forEach(s => s.update(dt, cycleTime));
 
-  // ByteDance color reveal progress
   let colorP = 0;
   if (cycleTime >= T_SCATTER_END && cycleTime < T_REVEAL_END) {
     colorP = (cycleTime - T_SCATTER_END) / (T_REVEAL_END - T_SCATTER_END);
@@ -541,17 +529,18 @@ function tick(ts) {
   drawNotebook();
 
   if (cycleTime < T_STATIC) {
-    // Pure static: draw everything at rest
-    ctx.font = FONT;
-    ctx.textBaseline = 'alphabetic';
+    // Pure static: draw all letters as sand grains at rest
     ctx.fillStyle = INK;
-    letters.forEach(l => ctx.fillText(l.ch, l.x, l.y));
+    ctx.globalAlpha = 1;
+    letters.forEach(l => {
+      for (const grain of l.grains) {
+        ctx.fillRect(l.x + grain.ox, l.y + grain.oy, 1, 1);
+      }
+    });
 
   } else {
     // Scatter + reveal phases
-    // Draw floaters (they manage own phases internally)
     floaters.forEach(f => f.draw(ctx));
-    // Draw ByteDance
     stables.forEach(s => s.draw(ctx, colorP));
   }
 

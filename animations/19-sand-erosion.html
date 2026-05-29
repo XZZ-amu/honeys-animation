@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sand Erosion — ByteDance</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #FDF8E8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  overflow: hidden;
+}
+canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+'use strict';
+
+// ── Canvas setup ──────────────────────────────────────────────────────────────
+const canvas = document.getElementById('c');
+const ctx    = canvas.getContext('2d');
+const W = 900, H = 560;
+canvas.width  = W;
+canvas.height = H;
+
+// ── Config ────────────────────────────────────────────────────────────────────
+const LINE_SPACING = 32;
+const LEFT_MARGIN  = 60;
+const FONT_SIZE    = 36;
+const FONT         = `italic ${FONT_SIZE}px 'Segoe Script','Brush Script MT','Comic Sans MS',cursive`;
+
+const LINES = [
+  "We walk through",
+  "the golden hour",
+  "when shadows grow",
+  "long — ByteDance",
+  "keeps the light",
+  "burning bright",
+  "against the wind"
+];
+const BD_LINE_IDX = 3;
+const BD_WORD     = "ByteDance";
+
+const COLOR_INK   = { r: 44,  g: 62,  b: 80  };   // #2C3E50
+const COLOR_BD    = { r: 65,  g: 105, b: 225 };   // #4169E1
+
+// Timing (seconds)
+const T_SHOW    = 1.0;   // static display ends
+const T_ERODE   = 4.0;   // erosion ends
+const T_SETTLE  = 5.5;   // only ByteDance remains
+const T_COLOR   = 7.0;   // BD color transition ends
+const T_FADE    = 7.8;   // fade-out ends
+const T_TOTAL   = 8.0;   // loop period
+
+// Wind gusts within [T_SHOW, T_ERODE]
+const GUSTS = [
+  { t: 1.15, s: 0.22, d: 0.35 },
+  { t: 1.75, s: 0.38, d: 0.45 },
+  { t: 2.25, s: 0.54, d: 0.55 },
+  { t: 2.85, s: 0.68, d: 0.50 },
+  { t: 3.20, s: 0.80, d: 0.60 },
+  { t: 3.55, s: 0.93, d: 0.75 },
+];
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const smoothstep = t => t * t * (3 - 2 * t);
+const rand = () => Math.random();
+
+function hexToRgb(hex) {
+  return {
+    r: parseInt(hex.slice(1,3), 16),
+    g: parseInt(hex.slice(3,5), 16),
+    b: parseInt(hex.slice(5,7), 16)
+  };
+}
+
+function rgbStr(r, g, b) {
+  return `rgb(${r|0},${g|0},${b|0})`;
+}
+
+function windAt(t) {
+  if (t < T_SHOW || t > T_ERODE) return 0;
+  let w = 0;
+  for (const g of GUSTS) {
+    if (t >= g.t && t <= g.t + g.d) {
+      const phase = (t - g.t) / g.d;
+      w = Math.max(w, g.s * Math.sin(phase * Math.PI));
+    }
+  }
+  return w;
+}
+
+// ── Offscreen canvas ──────────────────────────────────────────────────────────
+const off = document.createElement('canvas');
+off.width = W; off.height = H;
+const offCtx = off.getContext('2d');
+
+// ── Grain arrays ──────────────────────────────────────────────────────────────
+// grain: { ox, oy, size, grip, blown, isBD, breathPhase }
+let grains = [];
+// flying: { x, y, vx, vy, size, alpha }
+let flying = [];
+
+function buildGrains() {
+  grains = [];
+  flying = [];
+
+  offCtx.font          = FONT;
+  offCtx.textBaseline  = 'alphabetic';
+  offCtx.textAlign     = 'left';
+
+  // Vertical centering
+  const totalH = LINES.length * LINE_SPACING;
+  const baseY  = Math.round((H - totalH) / 2) + LINE_SPACING + 4;
+
+  // Measure ByteDance x range in its line
+  const bdLineStr   = LINES[BD_LINE_IDX];
+  const bdCharStart = bdLineStr.indexOf(BD_WORD);
+  const bdLineX     = LEFT_MARGIN + 20;
+
+  let bdX0 = -1, bdX1 = -1;
+  if (bdCharStart >= 0) {
+    const pre = bdLineStr.substring(0, bdCharStart);
+    bdX0 = bdLineX + offCtx.measureText(pre).width;
+    bdX1 = bdX0   + offCtx.measureText(BD_WORD).width;
+  }
+
+  const STEP = 2; // sample every 2px
+
+  for (let li = 0; li < LINES.length; li++) {
+    const ly = baseY + li * LINE_SPACING;
+    offCtx.clearRect(0, 0, W, H);
+    offCtx.fillStyle = '#000';
+    offCtx.fillText(LINES[li], bdLineX, ly);
+
+    const imgData = offCtx.getImageData(0, 0, W, H).data;
+
+    const isBDLine = (li === BD_LINE_IDX);
+
+    for (let py = 0; py < H; py += STEP) {
+      for (let px = 0; px < W; px += STEP) {
+        if (imgData[(py * W + px) * 4 + 3] < 80) continue;
+
+        const isBD = isBDLine && bdX0 >= 0 && px >= bdX0 - 3 && px <= bdX1 + 3;
+
+        // Grip: lower on left (windward), higher on right
+        const xNorm = clamp((px - LEFT_MARGIN) / (W - LEFT_MARGIN - 50), 0, 1);
+        let grip = 0.12 + xNorm * 0.68;
+        grip += (rand() - 0.5) * 0.28;
+        grip  = clamp(grip, 0.03, 0.97);
+
+        if (isBD) grip = 0.96 + rand() * 0.04;
+
+        grains.push({
+          ox:          px,
+          oy:          py,
+          size:        1.0 + rand() * 0.5,
+          grip:        grip,
+          blown:       false,
+          isBD:        isBD,
+          breathPhase: rand() * Math.PI * 2,
+        });
+      }
+    }
+  }
+}
+
+// ── Physics: blow grains ──────────────────────────────────────────────────────
+function blowGrains(wind) {
+  if (wind <= 0) return;
+  for (let i = 0; i < grains.length; i++) {
+    const g = grains[i];
+    if (g.blown || g.isBD) continue;
+    const force = wind + (rand() - 0.25) * 0.18;
+    if (force <= g.grip) continue;
+
+    g.blown = true;
+    const spd   = 180 + rand() * 280;
+    const angle = (-0.18 + rand() * 0.35); // slight upward spread
+    flying.push({
+      x:    g.ox,
+      y:    g.oy,
+      vx:   Math.cos(angle) * spd,
+      vy:   Math.sin(angle) * spd - rand() * 25,
+      size: g.size,
+      alpha: 1.0,
+    });
+  }
+}
+
+// ── Draw helpers ──────────────────────────────────────────────────────────────
+function drawBackground() {
+  ctx.fillStyle = '#FDF8E8';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.strokeStyle = 'rgba(100,150,200,0.3)';
+  ctx.lineWidth   = 1;
+  for (let y = LINE_SPACING; y < H; y += LINE_SPACING) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(W, y);
+    ctx.stroke();
+  }
+
+  ctx.strokeStyle = 'rgba(200,70,70,0.45)';
+  ctx.lineWidth   = 1;
+  ctx.beginPath();
+  ctx.moveTo(LEFT_MARGIN, 0);
+  ctx.lineTo(LEFT_MARGIN, H);
+  ctx.stroke();
+}
+
+// ── Main loop ─────────────────────────────────────────────────────────────────
+let startTime = null;
+let prevT     = 0;
+
+function frame(ts) {
+  if (!startTime) startTime = ts;
+  const elapsed = (ts - startTime) / 1000;
+  const t       = elapsed % T_TOTAL;
+
+  // Detect loop wrap → reset grains
+  if (prevT > T_TOTAL * 0.8 && t < 0.3) {
+    buildGrains();
+  }
+  prevT = t;
+
+  // Wind
+  const wind = windAt(t);
+  blowGrains(wind);
+
+  // Integrate flying grains
+  const dt = 1 / 60;
+  for (let i = flying.length - 1; i >= 0; i--) {
+    const f = flying[i];
+    f.x    += f.vx * dt;
+    f.y    += f.vy * dt;
+    f.vy   += 35 * dt;            // gentle gravity
+    f.alpha -= 0.028 + rand() * 0.018;
+    if (f.alpha <= 0 || f.x > W + 8 || f.y > H + 8 || f.y < -8) {
+      flying.splice(i, 1);
+    }
+  }
+
+  // ByteDance color transition
+  let bdColorT = 0;
+  if (t >= T_SETTLE && t < T_COLOR) {
+    bdColorT = smoothstep(clamp((t - T_SETTLE) / (T_COLOR - T_SETTLE), 0, 1));
+  } else if (t >= T_COLOR && t < T_FADE) {
+    bdColorT = 1;
+  }
+
+  // Global fade
+  let globalAlpha = 1;
+  if (t < 0.35) {
+    globalAlpha = t / 0.35;
+  } else if (t >= T_FADE) {
+    globalAlpha = clamp(1 - (t - T_FADE) / (T_TOTAL - T_FADE), 0, 1);
+  }
+
+  // Breathing amplitude (fades once wind starts)
+  const breathAmp = t < T_SHOW
+    ? 0.45
+    : Math.max(0, 0.45 - (t - T_SHOW) * 0.4);
+
+  // ── Render ────────────────────────────────────────────────────────────────
+  ctx.clearRect(0, 0, W, H);
+  drawBackground();
+
+  ctx.globalAlpha = globalAlpha;
+
+  // Interpolated ink color for ByteDance grains
+  const bdR = (COLOR_INK.r + (COLOR_BD.r - COLOR_INK.r) * bdColorT) | 0;
+  const bdG = (COLOR_INK.g + (COLOR_BD.g - COLOR_INK.g) * bdColorT) | 0;
+  const bdB = (COLOR_INK.b + (COLOR_BD.b - COLOR_INK.b) * bdColorT) | 0;
+  const bdColor  = `rgb(${bdR},${bdG},${bdB})`;
+  const inkColor = `rgb(${COLOR_INK.r},${COLOR_INK.g},${COLOR_INK.b})`;
+
+  // Batch by color for fewer state changes
+  // Group 1: normal ink grains
+  ctx.fillStyle = inkColor;
+  const tSec = ts * 0.001;
+  for (let i = 0; i < grains.length; i++) {
+    const g = grains[i];
+    if (g.blown || g.isBD) continue;
+    const bx = Math.sin(g.breathPhase + tSec * 1.1) * breathAmp;
+    const by = Math.cos(g.breathPhase * 1.4 + tSec * 0.9) * breathAmp * 0.6;
+    const s  = g.size;
+    ctx.fillRect(g.ox + bx - s * 0.5, g.oy + by - s * 0.5, s, s);
+  }
+
+  // Group 2: ByteDance grains
+  ctx.fillStyle = bdColor;
+  for (let i = 0; i < grains.length; i++) {
+    const g = grains[i];
+    if (!g.isBD) continue;
+    // tiny tremble in wind
+    const tx = wind > 0 ? (rand() - 0.5) * wind * 0.9 : 0;
+    const ty = wind > 0 ? (rand() - 0.5) * wind * 0.6 : 0;
+    const bx = Math.sin(g.breathPhase + tSec * 1.1) * breathAmp * 0.5;
+    const by = Math.cos(g.breathPhase * 1.4 + tSec * 0.9) * breathAmp * 0.3;
+    const s  = g.size;
+    ctx.fillRect(g.ox + bx + tx - s * 0.5, g.oy + by + ty - s * 0.5, s, s);
+  }
+
+  // Flying grains
+  for (let i = 0; i < flying.length; i++) {
+    const f = flying[i];
+    ctx.globalAlpha = globalAlpha * f.alpha;
+    ctx.fillStyle   = inkColor;
+    ctx.fillRect(f.x - 0.5, f.y - 0.5, f.size, f.size);
+  }
+
+  ctx.globalAlpha = 1;
+
+  requestAnimationFrame(frame);
+}
+
+// ── Start ─────────────────────────────────────────────────────────────────────
+buildGrains();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
