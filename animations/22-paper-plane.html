@@ -51,31 +51,164 @@ const COLUMNS = [
   '每逢佳節倍思親',
 ];
 
-function drawPaper() {
+// ── Column/char position data ─────────────────────────────────
+// Pre-compute each column's x and each char's y so we can trigger fragments
+const lineSpacing = 28;
+const charH = 19;
+
+function getPaperLayout() {
+  const { x, y, w, h } = PAPER;
+  const colWidth = lineSpacing;
+  const startX = x + w - 18;
+  const textTop = y + 20;
+  const maxCharsPerCol = Math.floor((h - 40) / charH);
+  return { colWidth, startX, textTop, maxCharsPerCol };
+}
+
+// ── Particle system ───────────────────────────────────────────
+const particles = [];
+
+// Track which columns have been triggered
+const triggeredCols = new Set();
+
+function spawnParticlesForChar(cx, cy, elapsedMs) {
+  const count = 3 + Math.floor(Math.random() * 3); // 3–5
+  const colors = ['#FFD700', '#FFA500', '#FFAA33'];
+  for (let i = 0; i < count; i++) {
+    const w = 4 + Math.random() * 4;   // 4–8px
+    const h = 6 + Math.random() * 6;   // 6–12px
+    particles.push({
+      x: cx + (Math.random() - 0.5) * 10,
+      y: cy + (Math.random() - 0.5) * 10,
+      vx: (Math.random() - 0.5) * 40,
+      vy: -20 - Math.random() * 30,    // initial upward pop
+      w,
+      h,
+      color: colors[Math.floor(Math.random() * colors.length)],
+      rotSpeed: 3 + Math.random() * 5, // radians/s for flip
+      rotPhase: Math.random() * Math.PI * 2,
+      // spring target offsets relative to plane (set each frame)
+      targetOffsetX: -(50 + Math.random() * 150),
+      targetOffsetY: (Math.random() - 0.5) * 50,
+      spawnTime: elapsedMs,
+    });
+  }
+}
+
+// Trigger column ci at time elapsedMs (seconds float)
+function triggerColumn(ci, elapsedMs) {
+  if (triggeredCols.has(ci)) return;
+  triggeredCols.add(ci);
+
+  const { startX, textTop, maxCharsPerCol, colWidth } = getPaperLayout();
+  const cx = startX - ci * colWidth;
+  if (cx < PAPER.x + 6) return;
+
+  const col = COLUMNS[ci] || '';
+  const chars = col.split('').slice(0, maxCharsPerCol);
+
+  chars.forEach((ch, ri) => {
+    const staggerMs = ri * (30 + Math.random() * 20); // 30–50ms stagger
+    const triggerAt = elapsedMs * 1000 + staggerMs;
+    // Schedule the spawn (store as pending)
+    pendingSpawns.push({
+      cx,
+      cy: textTop + ri * charH,
+      triggerAtMs: triggerAt,
+    });
+  });
+}
+
+const pendingSpawns = [];
+
+function processPendingSpawns(nowMs) {
+  for (let i = pendingSpawns.length - 1; i >= 0; i--) {
+    const p = pendingSpawns[i];
+    if (nowMs >= p.triggerAtMs) {
+      spawnParticlesForChar(p.cx, p.cy, nowMs / 1000);
+      pendingSpawns.splice(i, 1);
+    }
+  }
+}
+
+
+function drawParticles(elapsedSec) {
+  ctx.save();
+  for (const p of particles) {
+    const age = elapsedSec - p.spawnTime;
+    // Flip: width oscillates via cos
+    const flipW = Math.abs(Math.cos(p.rotPhase + elapsedSec * p.rotSpeed)) * p.w;
+    const alpha = Math.min(1, Math.max(0, 1 - age * 0.08)); // very slow fade
+
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.ellipse(p.x, p.y, Math.max(0.5, flipW / 2), p.h / 2, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+// ── Draw paper with clip mask (left side disappears) ──────────
+// clipX is the x coordinate of the paper below which we don't draw
+// (to the left of clipX the paper has been "taken away")
+function drawPaper(clipX) {
   const { x, y, w, h } = PAPER;
 
-  // Shadow
   ctx.save();
+
+  // Shadow (draw separately to avoid clip affecting it)
   ctx.shadowColor = 'rgba(0,0,0,0.25)';
   ctx.shadowBlur = 18;
   ctx.shadowOffsetX = 4;
   ctx.shadowOffsetY = 6;
 
-  // White background
-  ctx.fillStyle = 'rgba(255,255,255,0.9)';
-  ctx.beginPath();
-  ctx.roundRect(x, y, w, h, 4);
-  ctx.fill();
+  // White background — only draw the part to the right of clipX
+  // clipX = plane x, paper disappears to the left of it
+  const edgeFade = 28; // gradient width
+  const paperRight = x + w;
+
+  if (clipX < paperRight) {
+    // The visible portion of paper starts at clipX (with fade)
+    const drawLeft = Math.max(x, clipX - edgeFade);
+
+    // Clip region: drawLeft to paperRight
+    ctx.beginPath();
+    ctx.rect(drawLeft, y - 20, paperRight - drawLeft + 10, h + 40);
+    ctx.clip();
+
+    // Fill the full white rect first; clip will hide left part
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, 4);
+    ctx.fill();
+  }
+
   ctx.restore();
 
-  // Vertical ruling lines (traditional letter paper)
-  const lineSpacing = 28;
+  // Now draw the gradient fade edge (left edge of remaining paper)
+  if (clipX > x && clipX < paperRight) {
+    ctx.save();
+    const fadeLeft = Math.max(x, clipX - edgeFade);
+    const grad = ctx.createLinearGradient(fadeLeft, 0, clipX + 4, 0);
+    grad.addColorStop(0, 'rgba(21,101,192,1)');    // background color
+    grad.addColorStop(1, 'rgba(21,101,192,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(fadeLeft, y, clipX - fadeLeft + 4, h);
+    ctx.restore();
+  }
+
+  // Vertical ruling lines
   const lineCount = Math.floor(w / lineSpacing);
   ctx.save();
   ctx.strokeStyle = 'rgba(180,180,180,0.45)';
   ctx.lineWidth = 0.8;
+
+  // Only draw lines that are still visible (to the right of clipX)
   for (let i = 1; i < lineCount; i++) {
     const lx = x + i * lineSpacing;
+    if (lx < clipX - 5) continue; // already swept away
     ctx.beginPath();
     ctx.moveTo(lx, y + 12);
     ctx.lineTo(lx, y + h - 12);
@@ -83,32 +216,33 @@ function drawPaper() {
   }
   ctx.restore();
 
-  // Top/bottom border lines
+  // Top/bottom border lines (clip to visible part)
   ctx.save();
-  ctx.strokeStyle = 'rgba(200,180,160,0.5)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(x + 10, y + 12); ctx.lineTo(x + w - 10, y + 12);
-  ctx.moveTo(x + 10, y + h - 12); ctx.lineTo(x + w - 10, y + h - 12);
-  ctx.stroke();
+  const visLeft = Math.max(x + 10, clipX);
+  if (visLeft < x + w - 10) {
+    ctx.strokeStyle = 'rgba(200,180,160,0.5)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(visLeft, y + 12); ctx.lineTo(x + w - 10, y + 12);
+    ctx.moveTo(visLeft, y + h - 12); ctx.lineTo(x + w - 10, y + h - 12);
+    ctx.stroke();
+  }
   ctx.restore();
 
-  // Vertical text — right to left, top to bottom per column
+  // Vertical text — skip chars in triggered columns
+  const { startX, textTop, maxCharsPerCol, colWidth } = getPaperLayout();
+
   ctx.save();
   ctx.font = '15px "Songti SC", "SimSun", "STSong", serif';
   ctx.fillStyle = '#333';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
 
-  const colWidth = lineSpacing;
-  const startX = x + w - 18; // rightmost column x
-  const textTop = y + 20;
-  const charH = 19;
-  const maxCharsPerCol = Math.floor((h - 40) / charH);
-
   COLUMNS.forEach((col, ci) => {
     const cx = startX - ci * colWidth;
-    if (cx < x + 6) return; // don't overflow left
+    if (cx < x + 6) return;
+    // If this column is triggered, don't draw its text
+    if (triggeredCols.has(ci)) return;
     const chars = col.split('');
     chars.slice(0, maxCharsPerCol).forEach((ch, ri) => {
       ctx.fillText(ch, cx, textTop + ri * charH);
@@ -119,7 +253,6 @@ function drawPaper() {
 }
 
 // ── Paper Plane ───────────────────────────────────────────────
-// Plane SVG-style shape: classic folded paper plane, side view
 function drawPlane(cx, cy, scale = 1) {
   ctx.save();
   ctx.translate(cx, cy);
@@ -181,9 +314,9 @@ const OSC_AMP  = 5;     // px oscillation amplitude
 const OSC_FREQ = 1.5;   // Hz
 
 let startTime = null;
+let lastTs = null;
 
 function getPlanePos(t) {
-  // t in [0,1]: normalized progress across screen
   const W = canvas.width;
   const H = canvas.height;
 
@@ -198,12 +331,38 @@ function getPlanePos(t) {
   return { x, y: yBase + osc };
 }
 
+// Get trajectory Y at a given x (approximate by inverting getPlanePos)
+function getTrajectoryY(targetX) {
+  const W = canvas.width;
+  const H = canvas.height;
+  const t = (targetX + 40) / (W + 80);
+  const tClamped = Math.max(0, Math.min(1, t));
+  const yBase = H * (0.55 - tClamped * 0.25);
+  const osc = Math.sin(tClamped * DURATION * OSC_FREQ * Math.PI * 2) * OSC_AMP;
+  return yBase + osc;
+}
+
+function resetState() {
+  trail.length = 0;
+  particles.length = 0;
+  pendingSpawns.length = 0;
+  triggeredCols.clear();
+}
+
 // ── Main loop ─────────────────────────────────────────────────
 function frame(ts) {
-  if (!startTime) startTime = ts;
+  if (!startTime) { startTime = ts; lastTs = ts; }
+
+  const dt = Math.min((ts - lastTs) / 1000, 0.05); // cap at 50ms
+  lastTs = ts;
 
   const elapsed = (ts - startTime) / 1000;
   const t = (elapsed % DURATION) / DURATION;
+
+  // Reset on loop start
+  if (t < 0.01 && trail.length > 20) {
+    resetState();
+  }
 
   // Clear
   ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -212,17 +371,70 @@ function frame(ts) {
   ctx.fillStyle = '#1565C0';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // Letter paper
-  drawPaper();
+  // Plane position
+  const { x: px, y: py } = getPlanePos(t);
+  const plane = { x: px, y: py };
+
+  // ── Trigger columns as plane passes ──
+  // Paper columns go right to left: ci=0 is rightmost
+  const { startX, colWidth } = getPaperLayout();
+  const TRIGGER_RADIUS = 30;
+
+  COLUMNS.forEach((_, ci) => {
+    const cx = startX - ci * colWidth;
+    if (Math.abs(px - cx) < TRIGGER_RADIUS) {
+      triggerColumn(ci, elapsed);
+    }
+  });
+
+  // Process stagger-delayed spawns
+  processPendingSpawns(elapsed * 1000);
+
+  // Update particles — spring toward plane slipstream
+  // Each particle has a fixed offset; target moves with plane
+  for (const p of particles) {
+    const targetX = plane.x + p.targetOffsetX;
+    const trajY = getTrajectoryY(targetX);
+    const targetY = trajY + p.targetOffsetY;
+
+    const springK = 3;
+    const damping = 0.92;
+
+    const ax = (targetX - p.x) * springK;
+    const ay = (targetY - p.y) * springK;
+
+    p.vx += ax * dt;
+    p.vy += ay * dt;
+    p.vx *= damping;
+    p.vy *= damping;
+
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+  }
+
+  // Remove out-of-bounds particles
+  const W = canvas.width;
+  const H = canvas.height;
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    if (p.x > W + 120 || p.x < -120 || p.y > H + 120 || p.y < -200) {
+      particles.splice(i, 1);
+    }
+  }
+
+  // ── Compute clipX for paper (plane's x, with some lag) ──
+  // The paper is swept away left of the plane's current x
+  const paperClipX = px;
+
+  // Letter paper (with clip mask)
+  drawPaper(paperClipX);
 
   // Trail
-  const { x: px, y: py } = getPlanePos(t);
-
-  // Reset trail on loop start
-  if (t < 0.01 && trail.length > 20) trail.length = 0;
-
   addTrailPoint(px, py);
   drawTrail();
+
+  // Particles (gold fragments)
+  drawParticles(elapsed);
 
   // Plane — slight nose-up tilt based on vertical velocity
   const tNext = Math.min(t + 0.002, 1);
