@@ -50,3 +50,7 @@ nav:
   - 风格规范: style-spec.md
 - 调研补充:
   - 一致性漂移解法: research-consistency.md
+  - 物理参数预设: research-physics-presets.md
+  - 动效时长规范: research-timing-presets.md
+  - 图片转意图技术: research-image-to-intent.md
+  - 图片转提示词模型: research-image-to-prompt-models.md
