@@ -1,0 +1,416 @@
+{
+  "version": "1.0.0",
+  "description": "情绪→配色映射表，系统根据用户选择的情绪自动应用配色方案",
+  "emotions": {
+    "warm_romantic": {
+      "label": "温暖浪漫",
+      "description_scene": "适合情侣纪念日、爱意表达、婚礼邀请、温馨家庭场景",
+      "palette": {
+        "primary": {
+          "hex": "#E8735A",
+          "name": "珊瑚玫瑰",
+          "usage_ratio": "45%",
+          "note": "主色调，传递温暖与爱意"
+        },
+        "secondary_1": {
+          "hex": "#F2A97E",
+          "name": "蜜桃橙",
+          "usage_ratio": "22%",
+          "note": "辅助色，柔和过渡"
+        },
+        "secondary_2": {
+          "hex": "#C85A8A",
+          "name": "玫瑰粉",
+          "usage_ratio": "20%",
+          "note": "辅助色，增加浪漫感"
+        },
+        "accent_1": {
+          "hex": "#FFD6CC",
+          "name": "粉霞白",
+          "usage_ratio": "8%",
+          "note": "点缀色，高光细节"
+        },
+        "accent_2": {
+          "hex": "#A63D5F",
+          "name": "深玫红",
+          "usage_ratio": "5%",
+          "note": "点缀色，强调边框或描边"
+        },
+        "background": {
+          "hex": "#FFF5F0",
+          "name": "暖白",
+          "note": "米白偏粉，衬托温柔氛围"
+        }
+      }
+    },
+    "lively_festive": {
+      "label": "活泼热闹",
+      "description_scene": "适合生日派对、节庆活动、儿童内容、欢乐聚会场景",
+      "palette": {
+        "primary": {
+          "hex": "#FF6B35",
+          "name": "活力橙",
+          "usage_ratio": "40%",
+          "note": "主色调，高饱和度传递热情"
+        },
+        "secondary_1": {
+          "hex": "#FFD700",
+          "name": "明黄",
+          "usage_ratio": "25%",
+          "note": "辅助色，欢快跳跃感"
+        },
+        "secondary_2": {
+          "hex": "#FF3366",
+          "name": "荧光粉红",
+          "usage_ratio": "20%",
+          "note": "辅助色，增加活力与张力"
+        },
+        "accent_1": {
+          "hex": "#00C9A7",
+          "name": "薄荷绿",
+          "usage_ratio": "10%",
+          "note": "点缀色，与暖色形成对比"
+        },
+        "accent_2": {
+          "hex": "#845EC2",
+          "name": "紫葡萄",
+          "usage_ratio": "5%",
+          "note": "点缀色，丰富色彩层次"
+        },
+        "background": {
+          "hex": "#FFFBF0",
+          "name": "奶油白",
+          "note": "暖白底色，让鲜艳色彩更跳"
+        }
+      }
+    },
+    "mysterious_magic": {
+      "label": "神秘魔法",
+      "description_scene": "适合魔幻故事、星象占卜、奇幻游戏、神秘礼物场景",
+      "palette": {
+        "primary": {
+          "hex": "#6A1B9A",
+          "name": "深紫",
+          "usage_ratio": "45%",
+          "note": "主色调，神秘深邃感"
+        },
+        "secondary_1": {
+          "hex": "#4A148C",
+          "name": "暗紫",
+          "usage_ratio": "22%",
+          "note": "辅助色，加深层次"
+        },
+        "secondary_2": {
+          "hex": "#1A237E",
+          "name": "午夜蓝",
+          "usage_ratio": "20%",
+          "note": "辅助色，宇宙星空感"
+        },
+        "accent_1": {
+          "hex": "#E040FB",
+          "name": "魔法紫光",
+          "usage_ratio": "8%",
+          "note": "点缀色，魔法粒子/光效"
+        },
+        "accent_2": {
+          "hex": "#FFD54F",
+          "name": "星尘金",
+          "usage_ratio": "5%",
+          "note": "点缀色，星星或关键高光"
+        },
+        "background": {
+          "hex": "#0D0D1A",
+          "name": "深空黑",
+          "note": "近黑的深蓝，衬托魔法光效"
+        }
+      }
+    },
+    "soft_floating": {
+      "label": "轻柔飘散",
+      "description_scene": "适合梦境场景、轻盈动画、婴儿祝福、冥想放松内容",
+      "palette": {
+        "primary": {
+          "hex": "#B8D4E8",
+          "name": "天空蓝",
+          "usage_ratio": "45%",
+          "note": "主色调，低饱和度传递轻盈感"
+        },
+        "secondary_1": {
+          "hex": "#D4B8E8",
+          "name": "薰衣草",
+          "usage_ratio": "22%",
+          "note": "辅助色，梦幻柔和"
+        },
+        "secondary_2": {
+          "hex": "#B8E8D4",
+          "name": "薄荷白",
+          "usage_ratio": "20%",
+          "note": "辅助色，清新飘逸"
+        },
+        "accent_1": {
+          "hex": "#FFFFFF",
+          "name": "纯白",
+          "usage_ratio": "8%",
+          "note": "点缀色，高光与泡泡感"
+        },
+        "accent_2": {
+          "hex": "#F8C8D4",
+          "name": "樱花粉",
+          "usage_ratio": "5%",
+          "note": "点缀色，增加温柔细节"
+        },
+        "background": {
+          "hex": "#F0F7FF",
+          "name": "云雾白",
+          "note": "极浅蓝白，如云层底色"
+        }
+      }
+    },
+    "clean_crisp": {
+      "label": "干净利落",
+      "description_scene": "适合产品展示、简历、专业汇报、科技感品牌内容",
+      "palette": {
+        "primary": {
+          "hex": "#1A1A2E",
+          "name": "深墨",
+          "usage_ratio": "40%",
+          "note": "主色调，高级感与专业性"
+        },
+        "secondary_1": {
+          "hex": "#16213E",
+          "name": "海军蓝",
+          "usage_ratio": "25%",
+          "note": "辅助色，沉稳有力"
+        },
+        "secondary_2": {
+          "hex": "#4A4A6A",
+          "name": "石板蓝",
+          "usage_ratio": "22%",
+          "note": "辅助色，层次过渡"
+        },
+        "accent_1": {
+          "hex": "#00D4AA",
+          "name": "电光绿",
+          "usage_ratio": "8%",
+          "note": "点缀色，关键信息或CTA强调"
+        },
+        "accent_2": {
+          "hex": "#FFFFFF",
+          "name": "纯白",
+          "usage_ratio": "5%",
+          "note": "点缀色，文字和细线"
+        },
+        "background": {
+          "hex": "#F5F5F7",
+          "name": "苹果白",
+          "note": "极浅灰白，干净不刺眼"
+        }
+      }
+    },
+    "playful_naughty": {
+      "label": "调皮捣蛋",
+      "description_scene": "适合恶作剧视频、儿童游戏、搞怪表情包、轻松整蛊内容",
+      "palette": {
+        "primary": {
+          "hex": "#FF9500",
+          "name": "撞色橙",
+          "usage_ratio": "42%",
+          "note": "主色调，活泼跳脱"
+        },
+        "secondary_1": {
+          "hex": "#34C759",
+          "name": "青蛙绿",
+          "usage_ratio": "23%",
+          "note": "辅助色，与橙色撞色对比"
+        },
+        "secondary_2": {
+          "hex": "#FF2D55",
+          "name": "警示红",
+          "usage_ratio": "20%",
+          "note": "辅助色，搞怪紧张感"
+        },
+        "accent_1": {
+          "hex": "#FFE500",
+          "name": "闪光黄",
+          "usage_ratio": "10%",
+          "note": "点缀色，爆炸标签/感叹号"
+        },
+        "accent_2": {
+          "hex": "#5856D6",
+          "name": "捣蛋紫",
+          "usage_ratio": "5%",
+          "note": "点缀色，增加不正经感"
+        },
+        "background": {
+          "hex": "#FFFDE7",
+          "name": "浅柠黄",
+          "note": "微黄底色，呼应顽皮氛围"
+        }
+      }
+    },
+    "calm_peaceful": {
+      "label": "安静祥和",
+      "description_scene": "适合冥想、睡前故事、自然风景、心理放松内容",
+      "palette": {
+        "primary": {
+          "hex": "#4A90A4",
+          "name": "静湖蓝",
+          "usage_ratio": "45%",
+          "note": "主色调，宁静致远"
+        },
+        "secondary_1": {
+          "hex": "#6BA3A3",
+          "name": "青灰",
+          "usage_ratio": "22%",
+          "note": "辅助色，淡然过渡"
+        },
+        "secondary_2": {
+          "hex": "#8FAF8F",
+          "name": "苔藓绿",
+          "usage_ratio": "20%",
+          "note": "辅助色，自然安宁"
+        },
+        "accent_1": {
+          "hex": "#C9E4DE",
+          "name": "浅水色",
+          "usage_ratio": "8%",
+          "note": "点缀色，水波或光晕"
+        },
+        "accent_2": {
+          "hex": "#2C6E6E",
+          "name": "深海绿",
+          "usage_ratio": "5%",
+          "note": "点缀色，沉稳收尾"
+        },
+        "background": {
+          "hex": "#F0F4F4",
+          "name": "雾灰白",
+          "note": "冷调浅灰，安静不扰"
+        }
+      }
+    },
+    "retro_nostalgic": {
+      "label": "复古怀旧",
+      "description_scene": "适合老照片风格、年代感视频、复古品牌、怀旧情感表达",
+      "palette": {
+        "primary": {
+          "hex": "#C17B3B",
+          "name": "琥珀棕",
+          "usage_ratio": "43%",
+          "note": "主色调，旧时光温度"
+        },
+        "secondary_1": {
+          "hex": "#8B5E3C",
+          "name": "深木棕",
+          "usage_ratio": "23%",
+          "note": "辅助色，复古厚重感"
+        },
+        "secondary_2": {
+          "hex": "#A8956A",
+          "name": "枯草黄",
+          "usage_ratio": "20%",
+          "note": "辅助色，泛黄纸张感"
+        },
+        "accent_1": {
+          "hex": "#D4B896",
+          "name": "旧象牙",
+          "usage_ratio": "9%",
+          "note": "点缀色，泛白高光"
+        },
+        "accent_2": {
+          "hex": "#5C3A1E",
+          "name": "深焦棕",
+          "usage_ratio": "5%",
+          "note": "点缀色，边缘做旧效果"
+        },
+        "background": {
+          "hex": "#F5EDD8",
+          "name": "羊皮纸",
+          "note": "泛黄米色，模拟老相纸底色"
+        }
+      }
+    },
+    "tech_future": {
+      "label": "科技未来",
+      "description_scene": "适合AI产品、科技发布会、数据可视化、赛博朋克风格内容",
+      "palette": {
+        "primary": {
+          "hex": "#00B4D8",
+          "name": "荧光蓝",
+          "usage_ratio": "42%",
+          "note": "主色调，数字感与未来感"
+        },
+        "secondary_1": {
+          "hex": "#0077B6",
+          "name": "深海蓝",
+          "usage_ratio": "23%",
+          "note": "辅助色，科技沉稳"
+        },
+        "secondary_2": {
+          "hex": "#023E8A",
+          "name": "宇宙蓝",
+          "usage_ratio": "20%",
+          "note": "辅助色，深邃背景层"
+        },
+        "accent_1": {
+          "hex": "#00F5D4",
+          "name": "电光绿",
+          "usage_ratio": "10%",
+          "note": "点缀色，数据流/粒子特效"
+        },
+        "accent_2": {
+          "hex": "#7B2FBE",
+          "name": "紫光",
+          "usage_ratio": "5%",
+          "note": "点缀色，赛博朋克感强调"
+        },
+        "background": {
+          "hex": "#03071E",
+          "name": "极夜黑",
+          "note": "接近纯黑的深蓝，让荧光色发光"
+        }
+      }
+    },
+    "nature_fresh": {
+      "label": "自然清新",
+      "description_scene": "适合户外活动、植物生长、健康品牌、春日氛围内容",
+      "palette": {
+        "primary": {
+          "hex": "#52B788",
+          "name": "叶绿",
+          "usage_ratio": "43%",
+          "note": "主色调，自然生机感"
+        },
+        "secondary_1": {
+          "hex": "#74C69D",
+          "name": "嫩草绿",
+          "usage_ratio": "22%",
+          "note": "辅助色，清新明亮"
+        },
+        "secondary_2": {
+          "hex": "#95D5B2",
+          "name": "薄荷绿",
+          "usage_ratio": "20%",
+          "note": "辅助色，通透轻盈"
+        },
+        "accent_1": {
+          "hex": "#F4D03F",
+          "name": "阳光黄",
+          "usage_ratio": "10%",
+          "note": "点缀色，阳光斑点/花蕊"
+        },
+        "accent_2": {
+          "hex": "#2D6A4F",
+          "name": "深林绿",
+          "usage_ratio": "5%",
+          "note": "点缀色，树干或阴影细节"
+        },
+        "background": {
+          "hex": "#F0FDF4",
+          "name": "晨露白",
+          "note": "极浅绿白，清晨自然光感"
+        }
+      }
+    }
+  }
+}
